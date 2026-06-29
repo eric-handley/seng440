@@ -1,1 +1,3 @@
 build/
+samples/**
+samples/!SENG440*.wav
