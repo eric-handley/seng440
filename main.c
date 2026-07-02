@@ -3,6 +3,11 @@
 
 int main(int argc, char* argv[]) {
     wav_t* wav = read_wav("samples/in.wav");
+    
+    if (wav == NULL) {
+        return 1;
+    }
+
     print_wav_info(wav);
 
     uint16_t blockAlign = wav->fmt.nBlockAlign;
