@@ -23,7 +23,9 @@ uint8_t[] code_words = {
 
 int process_sample(uint16_t sample) { //possibly just put this into the loop
     int leading_zeros = 0;
-    //THIS IS TERRIBLE: replace this with actuallt useful count leading zeros not counting sign bit (which may be a zero)
+    int sign_bit_location = 13; //I asusme it is the 14th bit for a 14 bit sample
+    uint8_t sign_bit = (sample >> sign_bit_location) & 0x1; 
+    //THIS IS TERRIBLE: replace this with actually useful count leading zeros not counting sign bit (which may be a zero)
     if(sample>>5):
         leading_zeros = 7;
     else if(sample>>6):
@@ -42,7 +44,7 @@ int process_sample(uint16_t sample) { //possibly just put this into the loop
         leading_zeros = 0; */
     
         //Shift left by chord = 8 minus # of leading zeros (ie if no leading zeros, this is the 8th chord, and don't shift at all)
-    sample = sample << (8 - leading_zeros);
+    sample = sample << (8 - leading_zeros); //now contains the leading 1, and the 4 most important bits, and the sign bit, and most likely sign bit duplication, but no promises
     //Keep the sign bit somehow
     //keep the 4 most important bits after the leading 1
 
