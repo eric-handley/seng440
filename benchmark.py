@@ -85,4 +85,8 @@ else:
 
     finally:
         execute("git checkout main")
-        execute("git stash pop")
+        
+        try: # If there's no changes to stash at the beginning, this will fail
+            execute("git stash pop")
+        except:
+            pass
