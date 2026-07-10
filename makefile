@@ -1,5 +1,5 @@
-SRCS := main.c $(wildcard src/*.c)
-DEBUG_ARGS := -Wall -Wno-unused
+SRCS := $(wildcard src/*.c)
+DEBUG_ARGS := -Wall -Wno-unused -Iinc
 
 default: build-debug run
 

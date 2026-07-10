@@ -1,4 +1,4 @@
-#include "../inc/wav.h"
+#include "wav.h"
 
 wav_t *read_wav(const char* filepath) {
     int fd = open(filepath, O_RDONLY);
