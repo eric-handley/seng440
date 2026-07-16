@@ -9,3 +9,6 @@ build-debug:
 
 run:
 	@./build/out
+
+clean:
+	@rm build/*

@@ -10,7 +10,7 @@ import resource
 import argparse
 from dataclasses import dataclass
 
-NUM_AVGING_RUNS = 10
+NUM_AVGING_RUNS = 3
 
 @dataclass
 class TagStats:
@@ -54,7 +54,7 @@ def benchmark_tag(tag: TagStats):
 
     for opt_level in range(0, 4):
         run_results = []
-        args = f"-O{opt_level} -static"
+        args = f"-O{opt_level} -static -Iinc"
 
         for i in range(0, NUM_AVGING_RUNS):
 
