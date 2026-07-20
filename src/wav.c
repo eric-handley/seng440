@@ -45,6 +45,76 @@ void print_wav_info(wav_t* wav) {
     printf("duration:    %.2f s\n", seconds);
 }
 
+void print_waveform(wav_t* wav) {
+    int16_t *samples = (int16_t *)wav->data.samples; // 16-bit stereo assumed
+    uint32_t samples_per_frame = wav->fmt.nBlockAlign / sizeof(int16_t);
+    uint32_t num_frames = wav->data.cksize / wav->fmt.nBlockAlign;
+
+    const int width = 120;      // terminal columns
+    const int rows = 12;        // terminal rows above/below the shared middle line
+    const int subs = rows * 2;  // half-block glyphs give two sub-cells per row
+
+    uint32_t frames_per_col = num_frames / width;
+    if (frames_per_col == 0) frames_per_col = 1;
+
+    // per-column peak (largest signed value) for the left and right channels,
+    // plus the overall min/max so we can put the min at the middle line
+    int left[width];
+    int right[width];
+    int global_min = 32767;
+    int global_max = -32768;
+    for (int col = 0; col < width; col++) {
+        uint32_t start = col * frames_per_col;
+        uint32_t end = start + frames_per_col;
+        if (end > num_frames) end = num_frames;
+
+        int16_t lpeak = samples[start * samples_per_frame];
+        int16_t rpeak = samples[start * samples_per_frame + 1];
+        for (uint32_t i = start; i < end; i++) {
+            int16_t l = samples[i * samples_per_frame];
+            int16_t r = samples[i * samples_per_frame + 1];
+            if (l > lpeak) lpeak = l;
+            if (r > rpeak) rpeak = r;
+        }
+        left[col] = lpeak;
+        right[col] = rpeak;
+
+        if (lpeak < global_min) global_min = lpeak;
+        if (rpeak < global_min) global_min = rpeak;
+        if (lpeak > global_max) global_max = lpeak;
+        if (rpeak > global_max) global_max = rpeak;
+    }
+
+    int range = global_max - global_min;
+    if (range == 0) range = 1; // avoids div-by-zero on silence
+
+    for (int r = rows; r >= -rows; r--) {
+        for (int col = 0; col < width; col++) {
+            // height above the middle line, measured from the global minimum
+            int lamp = ((left[col] - global_min) * subs) / range;
+            int ramp = ((right[col] - global_min) * subs) / range;
+            const char *c = " ";
+
+            if (r > 0) {                                // upper half: left channel grows up
+                int lower = (r - 1) * 2 + 1;            // sub-cell at bottom of this row
+                int upper = (r - 1) * 2 + 2;            // sub-cell at top of this row
+                if (lamp >= upper) c = "\u2588";        // full block
+                else if (lamp >= lower) c = "\u2584";   // lower half block
+            } else if (r < 0) {                         // lower half: right channel grows down
+                int upper = (-r - 1) * 2 + 1;           // sub-cell nearest middle
+                int lower = (-r - 1) * 2 + 2;           // sub-cell farthest from middle
+                if (ramp >= lower) c = "\u2588";        // full block
+                else if (ramp >= upper) c = "\u2580";   // upper half block
+            } else {                                    // shared middle line (global minimum)
+                c = "\u2500";                           // horizontal box line
+            }
+
+            fputs(c, stdout);
+        }
+        putchar('\n');
+    }
+}
+
 void write_wav(const char* filepath, wav_t* wav) {
     int fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
