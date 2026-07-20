@@ -2,44 +2,7 @@
 
 #define MAGNITUDE_BIAS 132
 
-/*
-
-Compressed Code word array, should be OR-ed with the 4 second most important bits from the original
-
-Assumes already back in big endian, should be changed around for little endian
-*/
-
-uint8_t code_words[8] = {
-    0b00000000,
-    0b00010000, 
-    0b00100000, 
-    0b00110000, 
-    0b01000000, 
-    0b01010000, 
-    0b01100000, 
-    0b01110000    
-}; 
-
-// TODO figure out how to grab just the 4 most important bits from the original sample
-
-// int process_sample(uint16_t sample) { // possibly just put this into the loop
-//     int sign_bit_location = 13; // I asusme it is the 14th bit for a 14 bit sample
-//     uint8_t sign_bit = (sample >> sign_bit_location) & 0x1; 
-
-//     int leading_zeros = __clz16_inline(sample);
-
-//     // Shift left by chord = 8 minus # of leading zeros (ie if no leading zeros, this is the 8th chord, and don't shift at all)
-//     sample = sample << (8 - leading_zeros); // now contains the leading 1, and the 4 most important bits, and the sign bit, and most likely sign bit duplication, but no promises
-//     // Keep the sign bit somehow
-//     // keep the 4 most important bits after the leading 1
-
-//     // OR the result with the appropriate code word (use chord to index into the code word array)
-
-
-//     return 0; // temp for compiler
-// }
-
-int process_sample(int16_t s) {
+uint8_t compress_sample(int16_t s) {
     int16_t const mask = s >> 15;                            // Must be signed to allow sign extension when shifting
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
@@ -71,6 +34,22 @@ int process_sample(int16_t s) {
     return code_word;
 }
 
+int16_t decompress_sample(uint8_t s) {
+    uint8_t sign_bit = s & 0x80;
+    
+    uint8_t chord_index = (s ^ sign_bit) >> 4;
+
+    uint16_t magnitude = ((s & 0x0F | 0x10) << (chord_index + 3));
+
+    magnitude -= MAGNITUDE_BIAS;
+
+    
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
+    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
+
+    return out;
+}
+
 wav_t* compress_wav(wav_t* in) {
     uint16_t blockAlign = in->fmt.nBlockAlign;
     uint32_t num_frames = in->data.cksize / blockAlign;
@@ -89,8 +68,8 @@ wav_t* compress_wav(wav_t* in) {
         int16_t l_sample = *(frame+1) << 8 | *frame;
         int16_t r_sample = *(frame+3) << 8 | *(frame+2);
         
-        uint8_t l_processed = process_sample(l_sample);
-        uint8_t r_processed = process_sample(r_sample);
+        uint8_t l_processed = compress_sample(l_sample);
+        uint8_t r_processed = compress_sample(r_sample);
 
         uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
 
@@ -101,22 +80,68 @@ wav_t* compress_wav(wav_t* in) {
     return out;
 }
 
+wav_t* decompress_wav(wav_t* in) {
+    uint16_t blockAlign = in->fmt.nBlockAlign;
+    uint32_t num_frames = in->data.cksize / blockAlign;
+
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames);
+    if (out == NULL) {
+        exit(1);
+    }
+
+    uint16_t newBlockAlign = out->fmt.nBlockAlign;
+
+    for (uint32_t i = 0; i < num_frames; ++i) {
+        uint8_t *frame = &in->data.samples[i * blockAlign];
+
+        int16_t l_sample = *frame;
+        int16_t r_sample = *(frame+1);
+        
+        int16_t l_processed = decompress_sample(l_sample);
+        int16_t r_processed = decompress_sample(r_sample);
+
+        uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
+
+        uint8_t l_sample_low  = (uint8_t)(l_processed);
+        uint8_t l_sample_high = (uint8_t)(l_processed >> 8);
+
+        uint8_t r_sample_low  = (uint8_t)(r_processed);
+        uint8_t r_sample_high = (uint8_t)(r_processed >> 8);
+
+        // // print l_processed and l_sample_low and l_sample_high in binary to sanity check
+        // printf("l_processed: %s / l_sample_low: %s / l_sample_high: %s\n", u16_to_binary(l_processed), byte_to_binary(l_sample_low), byte_to_binary(l_sample_high));
+        // printf("r_processed: %s / r_sample_low: %s / r_sample_high: %s\n", u16_to_binary(r_processed), byte_to_binary(r_sample_low), byte_to_binary(r_sample_high));
+
+        *out_frame       = l_sample_low;
+        *(out_frame + 1) = l_sample_high;
+        *(out_frame + 2) = r_sample_low;
+        *(out_frame + 3) = r_sample_high;
+    }
+
+    return out;    
+}
+
 int main(int argc, char* argv[]) {
-    wav_t* wav = read_wav("samples/in.wav");
+    wav_t* input = read_wav("samples/untitled.wav");
     
-    if (wav == NULL) {
+    if (input == NULL) {
         return 1;
     }
 
     // print_wav_info(wav);
-    print_waveform(wav);
+    // print_waveform(wav);
     
-    wav_t* out = compress_wav(wav);
+    wav_t* compressed = compress_wav(input);
+    write_wav("build/out_compressed.wav", compressed);
+    
+    // print_wav_info(out);
+    // print_waveform(out);
+    
+    wav_t* decompressed = decompress_wav(compressed);
+    write_wav("build/out_decompressed.wav", decompressed);
 
-    print_waveform(out);
-    write_wav("build/out_compressed.wav", out);
-
-    free(out);
+    free(compressed);
+    free(decompressed);
 
     return 0;
 }
