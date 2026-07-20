@@ -62,6 +62,7 @@ int main(int argc, char* argv[]) {
     write_wav(out_path, output);
 
     free(output);
+    free(output);
 
     return 0;
 }
