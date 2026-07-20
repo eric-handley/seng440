@@ -24,6 +24,38 @@ wav_t *read_wav(const char* filepath) {
     return (wav_t *)map;
 }
 
+wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSample, uint32_t num_frames) {
+    uint16_t block_align = nChannels * (wBitsPerSample / 8);
+    uint32_t data_size = num_frames * block_align;
+
+    size_t total = sizeof(wav_header_t) + sizeof(wav_fmt_t)
+                 + offsetof(wav_data_t, samples) + data_size;
+
+    wav_t *wav = malloc(total);
+    if (wav == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+
+    memcpy(wav->header.ckID, "RIFF", 4);
+    wav->header.cksize = total - 8;                                         // RIFF cksize is file size minus 8
+    wav->header.wavID = 0x45564157;                                         // "WAVE" little-endian
+
+    memcpy(wav->fmt.ckID, "fmt ", 4);
+    wav->fmt.cksize = 16;                                                   // 16 for PCM
+    wav->fmt.wFormatTag = 1;                                                // 1 for PCM
+    wav->fmt.nChannels = nChannels;
+    wav->fmt.nSamplesPerSec = nSamplesPerSec;
+    wav->fmt.nAvgBytesPerSec = nSamplesPerSec * block_align;
+    wav->fmt.nBlockAlign = block_align;
+    wav->fmt.wBitsPerSample = wBitsPerSample;
+
+    memcpy(wav->data.ckID, "data", 4);
+    wav->data.cksize = data_size;
+
+    return wav;
+}
+
 void print_wav_info(wav_t* wav) {
     printf("ckID:        %.4s\n", wav->header.ckID);
     printf("cksize:      %u bytes\n", wav->header.cksize);

@@ -42,6 +42,7 @@ typedef struct __attribute__((packed)) wav_t {
 } wav_t;
 
 wav_t *read_wav(const char *filepath);
+wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSample, uint32_t num_frames);
 void print_wav_info(wav_t *wav);
 void print_waveform(wav_t *wav);
 void write_wav(const char *filepath, wav_t *wav);

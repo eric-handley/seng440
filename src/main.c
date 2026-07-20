@@ -71,6 +71,36 @@ int process_sample(int16_t s) {
     return code_word;
 }
 
+wav_t* compress_wav(wav_t* in) {
+    uint16_t blockAlign = in->fmt.nBlockAlign;
+    uint32_t num_frames = in->data.cksize / blockAlign;
+
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 8, num_frames);
+    if (out == NULL) {
+        exit(1);
+    }
+
+    uint16_t newBlockAlign = out->fmt.nBlockAlign;
+
+    for (uint32_t i = 0; i < num_frames; ++i) {
+        uint8_t *frame = &in->data.samples[i * blockAlign];
+
+        // Samples are 2's compliment little-endian
+        int16_t l_sample = *(frame+1) << 8 | *frame;
+        int16_t r_sample = *(frame+3) << 8 | *(frame+2);
+        
+        uint8_t l_processed = process_sample(l_sample);
+        uint8_t r_processed = process_sample(r_sample);
+
+        uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
+
+        *out_frame       = l_processed; // Endianness no longer matters because samples are now only 1 byte
+        *(out_frame + 1) = r_processed;
+    }
+
+    return out;
+}
+
 int main(int argc, char* argv[]) {
     wav_t* wav = read_wav("samples/in.wav");
     
@@ -79,23 +109,14 @@ int main(int argc, char* argv[]) {
     }
 
     // print_wav_info(wav);
-    // print_waveform(wav);
-
-    uint16_t blockAlign = wav->fmt.nBlockAlign;
-    uint32_t num_frames = wav->data.cksize / blockAlign;
+    print_waveform(wav);
     
-    for (uint32_t i = 0; i < num_frames; ++i) {
-        uint8_t *frame = &wav->data.samples[i * blockAlign];
+    wav_t* out = compress_wav(wav);
 
-        // Samples are 2's compliment little-endian
-        int16_t l_sample = *(frame+1) << 8 | *frame;
-        int16_t r_sample = *(frame+3) << 8 | *(frame+2);
-        
-        process_sample(l_sample);
-        process_sample(r_sample);
-    }
-    
-    write_wav("build/out.wav", wav);
+    print_waveform(out);
+    write_wav("build/out_compressed.wav", out);
+
+    free(out);
 
     return 0;
 }
