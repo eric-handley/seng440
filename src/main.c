@@ -7,7 +7,16 @@ uint8_t compress_sample(int16_t s) {
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
 
-    magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
+    // magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
+
+    // uint16_t sat = -(magnitude >> 15);                       // All 1s if bias pushed magnitude into bit 15 (e.g. INT16_MIN), else 0
+    // magnitude = (magnitude & ~sat) | (0x7FFF & sat);         // Branchless clamp to 0x7FFF so it maps to the top codeword instead of underflowing clz
+
+    asm volatile (
+        "qadd16\t%0, %1, %2\n"
+        : "=r" (magnitude)
+        : "r" (magnitude), "r" (MAGNITUDE_BIAS)
+    );
 
     uint8_t clz = __clz16_inline(magnitude) - 1;             // -1 to remove zero in place of sign bit
 
@@ -39,10 +48,9 @@ int16_t decompress_sample(uint8_t s) {
     
     uint8_t chord_index = (s ^ sign_bit) >> 4;
 
-    uint16_t magnitude = ((s & 0x0F | 0x10) << (chord_index + 3));
+    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
 
     magnitude -= MAGNITUDE_BIAS;
-
     
     int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
     int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
