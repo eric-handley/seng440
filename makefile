@@ -1,5 +1,5 @@
 SRCS := $(wildcard src/*.c)
-DEBUG_ARGS := -Wall -Wno-unused -Iinc
+DEBUG_ARGS := -Wall -Wno-unused -Iinc -Wno-address-of-packed-member
 
 default: build-debug run
 
