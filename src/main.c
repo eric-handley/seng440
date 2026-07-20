@@ -1,6 +1,6 @@
 #include "main.h"
 
-
+#define MAGNITUDE_BIAS 132
 
 /*
 
@@ -39,19 +39,36 @@ uint8_t code_words[8] = {
 //     return 0; // temp for compiler
 // }
 
-int process_sample(uint16_t s) {
+int process_sample(int16_t s) {
+    int16_t const mask = s >> 15;                            // Must be signed to allow sign extension when shifting
+    uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
-    uint16_t magnitude = ((s + (s >> 15)) ^ (s >> 15));
 
-    uint8_t clz = __clz16_inline(magnitude);
+    magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
 
-    uint8_t code_word_index = 7 - clz;
-    uint8_t code_word = code_words[code_word_index];
+    uint8_t clz = __clz16_inline(magnitude) - 1;             // -1 to remove zero in place of sign bit
 
-    code_word |= sign_bit >> 8;
+    uint8_t chord_index = 7 - clz;
+    uint8_t code_word_base = chord_index << 4;               // Shift chord bits into position
 
-    // & 0x0F;
+    uint8_t code_word = (code_word_base | (sign_bit >> 8)) | // Restore sign bit from bit 15 to 7 for uint8 output
+                        ((magnitude >> (10 - clz)) & 0x0F);  // Shift ABCD to bits 0:3 and mask to complete codeword 
 
+    // Debug output
+    // printf("sign: %s / sample: %s / %5d\tmag (biased): %s / clz: %3d", 
+    //     u16_to_binary(sign_bit),
+    //     u16_to_binary(s), 
+    //     (int16_t)s, 
+    //     u16_to_binary(magnitude), 
+    //     clz
+    // );
+
+    // printf("\t codeword: %s / out: %s\n\n",
+    //     byte_to_binary(code_word_base),
+    //     byte_to_binary(code_word)
+    // );
+
+    return code_word;
 }
 
 int main(int argc, char* argv[]) {
@@ -67,11 +84,12 @@ int main(int argc, char* argv[]) {
     uint16_t blockAlign = wav->fmt.nBlockAlign;
     uint32_t num_frames = wav->data.cksize / blockAlign;
     
-    for (uint32_t i = 0; i < num_frames; i = i + 5000) {
+    for (uint32_t i = 0; i < num_frames; ++i) {
         uint8_t *frame = &wav->data.samples[i * blockAlign];
 
-        uint32_t l_sample = *(frame+1) << 8 | *frame;
-        uint32_t r_sample = *(frame+3) << 8 | *(frame+2);
+        // Samples are 2's compliment little-endian
+        int16_t l_sample = *(frame+1) << 8 | *frame;
+        int16_t r_sample = *(frame+3) << 8 | *(frame+2);
         
         process_sample(l_sample);
         process_sample(r_sample);
