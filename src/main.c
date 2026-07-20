@@ -7,16 +7,16 @@ uint8_t compress_sample(int16_t s) {
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
 
-    // magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
+    magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
 
-    // uint16_t sat = -(magnitude >> 15);                       // All 1s if bias pushed magnitude into bit 15 (e.g. INT16_MIN), else 0
-    // magnitude = (magnitude & ~sat) | (0x7FFF & sat);         // Branchless clamp to 0x7FFF so it maps to the top codeword instead of underflowing clz
+    uint16_t sat = -(magnitude >> 15);                       // All 1s if bias pushed magnitude into bit 15 (e.g. INT16_MIN), else 0
+    magnitude = (magnitude & ~sat) | (0x7FFF & sat);         // Branchless clamp to 0x7FFF so it maps to the top codeword instead of underflowing clz
 
-    asm volatile (
-        "qadd16\t%0, %1, %2\n"
-        : "=r" (magnitude)
-        : "r" (magnitude), "r" (MAGNITUDE_BIAS)
-    );
+    // asm volatile (
+    //     "usat\t%0, #15, %1\n"
+    //     : "=r" (magnitude)
+    //     : "r" (magnitude), "r" (MAGNITUDE_BIAS)
+    // );
 
     uint8_t clz = __clz16_inline(magnitude) - 1;             // -1 to remove zero in place of sign bit
 
@@ -129,27 +129,56 @@ wav_t* decompress_wav(wav_t* in) {
     return out;    
 }
 
+void print_usage(const char* prog_name) {
+    fprintf(stderr, "Usage: %s -i <input.wav> -o <output.wav> (-c | -d)\n", prog_name);
+    fprintf(stderr, "  -i <file>  Input WAV file\n");
+    fprintf(stderr, "  -o <file>  Output WAV file\n");
+    fprintf(stderr, "  -c         Compress input\n");
+    fprintf(stderr, "  -d         Decompress input\n");
+}
+
 int main(int argc, char* argv[]) {
-    wav_t* input = read_wav("samples/untitled.wav");
-    
+    const char* in_path = NULL;
+    const char* out_path = NULL;
+    bool do_compress = false;
+    bool do_decompress = false;
+
+    int opt;
+    while ((opt = getopt(argc, argv, "i:o:cd")) != -1) {
+        switch (opt) {
+            case 'i':
+                in_path = optarg;
+                break;
+            case 'o':
+                out_path = optarg;
+                break;
+            case 'c':
+                do_compress = true;
+                break;
+            case 'd':
+                do_decompress = true;
+                break;
+            default:
+                print_usage(argv[0]);
+                return 1;
+        }
+    }
+
+    if (in_path == NULL || out_path == NULL || do_compress == do_decompress) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    wav_t* input = read_wav(in_path);
+
     if (input == NULL) {
         return 1;
     }
 
-    // print_wav_info(wav);
-    // print_waveform(wav);
-    
-    wav_t* compressed = compress_wav(input);
-    write_wav("build/out_compressed.wav", compressed);
-    
-    // print_wav_info(out);
-    // print_waveform(out);
-    
-    wav_t* decompressed = decompress_wav(compressed);
-    write_wav("build/out_decompressed.wav", decompressed);
+    wav_t* output = do_compress ? compress_wav(input) : decompress_wav(input);
+    write_wav(out_path, output);
 
-    free(compressed);
-    free(decompressed);
+    free(output);
 
     return 0;
 }

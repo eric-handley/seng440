@@ -8,7 +8,8 @@ build-debug:
 	@gcc $(DEBUG_ARGS) $(SRCS) -o build/out
 
 run:
-	@./build/out
+	@./build/out -c -i samples/untitled.wav -o build/compressed.wav
+	@./build/out -d -i build/compressed.wav -o build/decompressed.wav
 
 clean:
 	@rm build/*
