@@ -2,7 +2,6 @@
 
 import subprocess
 import shlex
-import sys
 import glob
 import os
 import time
@@ -73,7 +72,8 @@ cli_args = parser.parse_args()
 if cli_args.current:
     benchmark_tag(TagStats("current", "uncommitted"))
 else:
-    execute("git stash")
+    stash_output = execute("git stash")
+    stashed = "No local changes to save" not in stash_output
 
     try:
         tags = execute("git for-each-ref refs/tags --format='%(refname:short) %(objectname:short)'").removesuffix("\n")
@@ -82,11 +82,11 @@ else:
         for tag in tags:
             execute(f"git checkout {tag.commit}")
             benchmark_tag(tag)
+            execute("git checkout main")
 
     finally:
+        # Always return to main before restoring the stash so it's applied on
+        # the same base it was created from, then only pop if we actually stashed.
         execute("git checkout main")
-        
-        try: # If there's no changes to stash at the beginning, this will fail
+        if stashed:
             execute("git stash pop")
-        except:
-            pass
