@@ -59,7 +59,7 @@ def benchmark_tag(tag: TagStats):
 
             build_with_args(args)
 
-            run_results.append(benchmark_command("./build/out -c -i samples/untitled.wav -o build/compressed.wav"))
+            run_results.append(benchmark_command("./build/out -c -i samples/sample_1.wav -o build/compressed.wav"))
 
         tag.wall_time = sum(r[0] for r in run_results) / NUM_AVGING_RUNS
         tag.cpu_time = sum(r[1] for r in run_results) / NUM_AVGING_RUNS
