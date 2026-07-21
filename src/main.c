@@ -34,6 +34,7 @@ int main(int argc, char* argv[]) {
                 return 1;
         }
     }
+    printf("Read in arguments: input=%s, output=%s, compress=%d, decompress=%d\n", in_path, out_path, do_compress, do_decompress);
 
     if (in_path == NULL || out_path == NULL || do_compress == do_decompress) {
         print_usage(argv[0]);
