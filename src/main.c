@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
                 return 1;
         }
     }
-    printf("Read in arguments: input=%s, output=%s, compress=%d, decompress=%d\n", in_path, out_path, do_compress, do_decompress);
+    // printf("Read in arguments: input=%s, output=%s, compress=%d, decompress=%d\n", in_path, out_path, do_compress, do_decompress);
 
     if (in_path == NULL || out_path == NULL || do_compress == do_decompress) {
         print_usage(argv[0]);
@@ -51,14 +51,9 @@ int main(int argc, char* argv[]) {
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
     wav_t* output = do_compress ? compress_wav(input) : decompress_wav(input);
-
-    clock_gettime(CLOCK_MONOTONIC, &t_end);
-    double processed_s = (t_end.tv_sec - t_start.tv_sec)
-                       + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
-    printf("Processed in %.8f seconds\n", processed_s);
-
+    
     // print_wav_info(output);
-
+    
     write_wav(out_path, output);
 
     free(output);
