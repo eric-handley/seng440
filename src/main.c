@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
                 return 1;
         }
     }
-    printf("Read in arguments: input=%s, output=%s, compress=%d, decompress=%d\n", in_path, out_path, do_compress, do_decompress);
+    // printf("Read in arguments: input=%s, output=%s, compress=%d, decompress=%d\n", in_path, out_path, do_compress, do_decompress);
 
     if (in_path == NULL || out_path == NULL || do_compress == do_decompress) {
         print_usage(argv[0]);
@@ -48,6 +48,9 @@ int main(int argc, char* argv[]) {
     }
 
     wav_t* output = do_compress ? compress_wav(input) : decompress_wav(input);
+    
+    // print_wav_info(output);
+    
     write_wav(out_path, output);
 
     free(output);
