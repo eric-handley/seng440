@@ -24,7 +24,7 @@ wav_t *read_wav(const char* filepath) {
     return (wav_t *)map;
 }
 
-wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSample, uint32_t num_frames) {
+wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSample, uint32_t num_frames, uint16_t format_tag) {
     uint16_t block_align = nChannels * (wBitsPerSample / 8);
     uint32_t data_size = num_frames * block_align;
 
@@ -43,7 +43,7 @@ wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSam
 
     memcpy(wav->fmt.ckID, "fmt ", 4);
     wav->fmt.cksize = 16;                                                   // 16 for PCM
-    wav->fmt.wFormatTag = 1;                                                // 1 for PCM
+    wav->fmt.wFormatTag = format_tag;
     wav->fmt.nChannels = nChannels;
     wav->fmt.nSamplesPerSec = nSamplesPerSec;
     wav->fmt.nAvgBytesPerSec = nSamplesPerSec * block_align;
@@ -57,6 +57,7 @@ wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSam
 }
 
 void print_wav_info(wav_t* wav) {
+    printf("\n-----\n");
     printf("ckID:        %.4s\n", wav->header.ckID);
     printf("cksize:      %u bytes\n", wav->header.cksize);
     printf("wavID:       %.4s\n", (char *)&wav->header.wavID);
@@ -74,7 +75,8 @@ void print_wav_info(wav_t* wav) {
     size_t nFrames = wav->data.cksize / wav->fmt.nBlockAlign;
     double seconds = (double)nFrames / wav->fmt.nSamplesPerSec;
     printf("frames:      %zu\n", nFrames);
-    printf("duration:    %.2f s\n", seconds);
+    printf("duration:    %.2f s", seconds);
+    printf("\n-----\n");
 }
 
 void print_waveform(wav_t* wav) {

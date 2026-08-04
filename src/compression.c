@@ -40,10 +40,11 @@ uint8_t compress_sample(int16_t s) {
     //     byte_to_binary(code_word)
     // );
 
-    return code_word;
+    return ~code_word;
 }
 
 int16_t decompress_sample(uint8_t s) {
+    s = ~s;
     uint8_t sign_bit = s & 0x80;
     
     uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
@@ -62,7 +63,7 @@ wav_t* compress_wav(wav_t* in) {
     uint16_t blockAlign = in->fmt.nBlockAlign;
     uint32_t num_frames = in->data.cksize / blockAlign;
 
-    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 8, num_frames);
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 8, num_frames, WAVE_FORMAT_MULAW);
     if (out == NULL) {
         exit(1);
     }
@@ -92,7 +93,7 @@ wav_t* decompress_wav(wav_t* in) {
     uint16_t blockAlign = in->fmt.nBlockAlign;
     uint32_t num_frames = in->data.cksize / blockAlign;
 
-    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames);
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames, WAVE_FORMAT_PCM);
     if (out == NULL) {
         exit(1);
     }
