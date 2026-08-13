@@ -82,8 +82,8 @@ wav_t* compress_wav(wav_t* in) {
     int16_t l_sample = *(frame+1) << 8 | *frame;
     int16_t r_sample = *(frame+3) << 8 | *(frame+2);
 
-
-    for (uint32_t i = 0; i < num_frames; ++i) {
+    uint32_t i = 0;
+    for (; i < num_frames-1; ++i) {
 
         //Moved up to reduce dependencies and allow for parallelism
         uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
@@ -105,6 +105,15 @@ wav_t* compress_wav(wav_t* in) {
         frame = &in->data.samples[(i+1)* blockAlign];
 
     }
+    uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
+
+        
+    uint8_t l_processed = compress_sample(l_sample);
+    uint8_t r_processed = compress_sample(r_sample);
+
+
+    *out_frame       = l_processed; // Endianness no longer matters because samples are now only 1 byte
+    *(out_frame + 1) = r_processed;
 
     return out;
 }
@@ -119,12 +128,14 @@ wav_t* decompress_wav(wav_t* in) {
     }
 
     uint16_t newBlockAlign = out->fmt.nBlockAlign;
+
+    // ~~~~~~~~~~ Prologue ~~~~~~~~~~
     uint8_t *frame = &in->data.samples[0];
 
     int16_t l_sample = *frame;
     int16_t r_sample = *(frame+1);
-
-    for (uint32_t i = 0; i < num_frames; ++i) {
+    uint32_t i = 0;
+    for (; i < num_frames-1; ++i) {
         
         int16_t l_processed = decompress_sample(l_sample);
         int16_t r_processed = decompress_sample(r_sample);
@@ -132,9 +143,9 @@ wav_t* decompress_wav(wav_t* in) {
         uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
 
         uint8_t l_sample_low  = (uint8_t)(l_processed);
-        uint8_t l_sample_high = (uint8_t)(l_processed >> 8);
-
         uint8_t r_sample_low  = (uint8_t)(r_processed);
+
+        uint8_t l_sample_high = (uint8_t)(l_processed >> 8);
         uint8_t r_sample_high = (uint8_t)(r_processed >> 8);
 
         // // print l_processed and l_sample_low and l_sample_high in binary to sanity check
@@ -149,10 +160,22 @@ wav_t* decompress_wav(wav_t* in) {
         *(out_frame + 2) = r_sample_low;
         *(out_frame + 3) = r_sample_high;
 
+        // get next iteration's samples (frame was incremented above)
         l_sample = *frame;
         r_sample = *(frame+1);
 
     }
+    int16_t l_processed = decompress_sample(l_sample);
+    int16_t r_processed = decompress_sample(r_sample);
+
+    uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
+
+    uint8_t l_sample_low  = (uint8_t)(l_processed);
+    uint8_t r_sample_low  = (uint8_t)(r_processed);
+
+
+    uint8_t l_sample_high = (uint8_t)(l_processed >> 8);
+    uint8_t r_sample_high = (uint8_t)(r_processed >> 8);
 
     return out;    
 }
