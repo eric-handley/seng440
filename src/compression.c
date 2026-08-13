@@ -119,12 +119,12 @@ wav_t* decompress_wav(wav_t* in) {
     }
 
     uint16_t newBlockAlign = out->fmt.nBlockAlign;
+    uint8_t *frame = &in->data.samples[0];
+
+    int16_t l_sample = *frame;
+    int16_t r_sample = *(frame+1);
 
     for (uint32_t i = 0; i < num_frames; ++i) {
-        uint8_t *frame = &in->data.samples[i * blockAlign];
-
-        int16_t l_sample = *frame;
-        int16_t r_sample = *(frame+1);
         
         int16_t l_processed = decompress_sample(l_sample);
         int16_t r_processed = decompress_sample(r_sample);
@@ -141,10 +141,17 @@ wav_t* decompress_wav(wav_t* in) {
         // printf("l_processed: %s / l_sample_low: %s / l_sample_high: %s\n", u16_to_binary(l_processed), byte_to_binary(l_sample_low), byte_to_binary(l_sample_high));
         // printf("r_processed: %s / r_sample_low: %s / r_sample_high: %s\n", u16_to_binary(r_processed), byte_to_binary(r_sample_low), byte_to_binary(r_sample_high));
 
+        
+        frame = &in->data.samples[(i+1)* blockAlign];
+
         *out_frame       = l_sample_low;
         *(out_frame + 1) = l_sample_high;
         *(out_frame + 2) = r_sample_low;
         *(out_frame + 3) = r_sample_high;
+
+        l_sample = *frame;
+        r_sample = *(frame+1);
+
     }
 
     return out;    
