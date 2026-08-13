@@ -3,7 +3,7 @@
 #define MAGNITUDE_BIAS 132
 
 uint8x8_t vector_compress_samples(int16x8_t s) {
-    // Neon registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
+    // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
     // Theoretically 128/8 = 16 samples could be returned from this function
     // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
 
@@ -26,12 +26,14 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF
 
     // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-    uint8x8_t clz = vmovn_u16(                           // Narrow each element to 8 bytes
-        vsubq_u16(vclzq_u16(magnitudes), vdupq_n_u16(1)) // -1 to remove zero in place of sign bit
+    uint8x8_t clz = vmovn_u16( // Narrow each element to 8 bytes
+        vclzq_u16(magnitudes)  // Non-vectorized version subtracts one here, which is compiler optimized out when we use
+                               // (7 - clz) and (10 - clz) later. Vector expression can't be optimized the same way
+                               // so here we remove the subtraction and instead do (8 - clz) and (11 - clz) later
     );
     
     // Now using 64 bit instructions/registers for 8x8
-    uint8x8_t chord_indecies = vsub_u8(vdup_n_u8(7), clz);
+    uint8x8_t chord_indecies = vsub_u8(vdup_n_u8(8), clz);
     uint8x8_t code_word_bases = vshl_n_u8(chord_indecies, 4); // Shift chord bits of each element into position = 0b0XXX0000
 
     // Cannot shift elements by variable amounts in one instruction. Need
@@ -39,7 +41,7 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     // Needs to be negative as vshr (vec shift right) can only shift by const
     int16x8_t shift_counts = vsubq_s16(
         vreinterpretq_s16_u16(vmovl_u8(clz)),
-        vdupq_n_s16(10)
+        vdupq_n_s16(11)
     );
 
     // Vectorized version of:
@@ -60,7 +62,7 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
 }
 
 int16x8_t vector_decompress_samples(uint8x8_t s) {
-    // Neon registers are 128 bits so 128/8 = 16 compressed samples can be 
+    // Neon q registers are 128 bits so 128/8 = 16 compressed samples can be 
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
 
@@ -84,7 +86,7 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
         shift_counts
     );
 
-    magnitudes = vsubq_u16(magnitudes, vdupq_n_u16(MAGNITUDE_BIAS));
+    magnitudes = vsubq_u16(magnitudes, vdupq_n_u16(MAGNITUDE_BIAS)); // Undo magnitude bias add
 
     // Cursed expression to shift sign bit to top bit of u16, then convert to s16 and shift right to extend the sign across all bits
     // Equiv. to int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;
