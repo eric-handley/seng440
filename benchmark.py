@@ -8,7 +8,16 @@ import re
 import shutil
 import resource
 import argparse
+import signal
 from dataclasses import dataclass
+
+# Turn SIGTERM into a normal exception so it unwinds through the same try/finally
+# cleanup (checkout main, restore stash) as Ctrl-C, instead of killing the
+# process mid-checkout and leaving a detached HEAD / stashed changes behind.
+def _handle_sigterm(signum, frame):
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 NUM_AVGING_RUNS = 3
 
