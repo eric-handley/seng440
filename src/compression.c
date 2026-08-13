@@ -84,18 +84,18 @@ wav_t* compress_wav(wav_t* in) {
 
         *out_frame       = l_processed; // Endianness no longer matters because samples are now only 1 byte
         *(out_frame + 1) = r_processed;
+//~~~~~~~~~~~~~~~~~~~
 
-
-        uint8_t *frame = &in->data.samples[(i+1) * blockAlign];
+        frame = &in->data.samples[(i+1) * blockAlign];
 
         // Samples are 2's compliment little-endian
-        int16_t l_sample = *(frame+1) << 8 | *frame;
-        int16_t r_sample = *(frame+3) << 8 | *(frame+2);
+        l_sample = *(frame+1) << 8 | *frame;
+        r_sample = *(frame+3) << 8 | *(frame+2);
         
-        uint8_t l_processed = compress_sample(l_sample);
-        uint8_t r_processed = compress_sample(r_sample);
+        l_processed = compress_sample(l_sample);
+        r_processed = compress_sample(r_sample);
 
-        uint8_t *out_frame = &out->data.samples[(i+1)* newBlockAlign];
+        out_frame = &out->data.samples[(i+1)* newBlockAlign];
 
         *out_frame       = l_processed; // Endianness no longer matters because samples are now only 1 byte
         *(out_frame + 1) = r_processed;
