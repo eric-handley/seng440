@@ -4,8 +4,9 @@
 
 uint8_t compress_sample(int16_t s) {
     int16_t const mask = s >> 15;                            // Getting the sign bit. It must be signed to allow sign extension when shifting so that the mask is all 1's instead of 000...01
+    uint16_t sign_bit  = s & 0x8000;                         // Moved up to reduce dependencies 
+
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
-    uint16_t sign_bit  = s & 0x8000;
 
     magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
 
@@ -47,11 +48,11 @@ int16_t decompress_sample(uint8_t s) {
     s = ~s;
     uint8_t sign_bit = s & 0x80;
     
-    /*move up to reduce dependencies and allow for parallelism*/
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough Shift up as unsigned int, then cast to signed so we get sign 
+    /*move up to add a gap between mask being assigned and being used to reduce dependencies and allow for parallelism*/
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough. Shift up as unsigned int, then cast to signed so we get sign 
                                                               // extension and shift back down to get 0xFF if negative or 0x00 if positive
     
-    
+    // Unfortunately, these are all true dependencies, and because the samples are handled one at a time, we can't really do much 
     uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
 
     uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
@@ -74,20 +75,35 @@ wav_t* compress_wav(wav_t* in) {
 
     uint16_t newBlockAlign = out->fmt.nBlockAlign;
 
-    for (uint32_t i = 0; i < num_frames; ++i) {
-        uint8_t *frame = &in->data.samples[i * blockAlign];
+    //~~~~~~~ Loop prologue ~~~~~~~
 
-        // Samples are 2's compliment little-endian
-        int16_t l_sample = *(frame+1) << 8 | *frame;
-        int16_t r_sample = *(frame+3) << 8 | *(frame+2);
+    uint8_t *frame = &in->data.samples[0];
+    // Samples are 2's compliment little-endian
+    int16_t l_sample = *(frame+1) << 8 | *frame;
+    int16_t r_sample = *(frame+3) << 8 | *(frame+2);
+
+
+    for (uint32_t i = 0; i < num_frames; ++i) {
+
+        //Moved up to reduce dependencies and allow for parallelism
+        uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
+
         
         uint8_t l_processed = compress_sample(l_sample);
         uint8_t r_processed = compress_sample(r_sample);
 
-        uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
 
         *out_frame       = l_processed; // Endianness no longer matters because samples are now only 1 byte
         *(out_frame + 1) = r_processed;
+        //~~~~~~~~~~~~
+
+        // Get the next frame's samples (same as before, but all shifted up one frame) 
+        // Samples are 2's compliment little-endian
+        l_sample = *((frame+2)+1) << 8 | *(frame+2);
+        r_sample = *((frame+2)+3) << 8 | *((frame+2)+2);
+        //Set the frame pointer to the next frame
+        frame = &in->data.samples[(i+1)* blockAlign];
+
     }
 
     return out;
