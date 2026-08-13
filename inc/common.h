@@ -5,6 +5,7 @@
 #include <stdbit.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <getopt.h>   // sometimes needed explicitly apparently 
 #include <string.h>
 
 static inline char* byte_to_binary(uint8_t byte) {
