@@ -181,7 +181,10 @@ def benchmark_tag(tag: TagInfo):
 
         asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
         asm_tag = labelled_pct(f"'{prev_tag_name}'", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
-        asm_v1 = labelled_pct(f"'{base_tag_name}'", asm_lines, base_asm[opt_level]) if not is_base and opt_level in base_asm else None
+        # Skip the v1 delta when the previous tag is v1 itself, since it would
+        # just duplicate the since-last-tag delta.
+        show_v1 = not is_base and prev_tag_name != base_tag_name
+        asm_v1 = labelled_pct(f"'{base_tag_name}'", asm_lines, base_asm[opt_level]) if show_v1 and opt_level in base_asm else None
         if is_base:
             base_asm[opt_level] = asm_lines
         prev_asm[opt_level] = asm_lines
@@ -194,7 +197,7 @@ def benchmark_tag(tag: TagInfo):
             cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation]) if opt_level > 0 else None
             key = (opt_level, operation)
             cpu_tag = labelled_pct(f"'{prev_tag_name}'", cpu, prev_cpu[key]) if key in prev_cpu else None
-            cpu_v1 = labelled_pct(f"'{base_tag_name}'", cpu, base_cpu[key]) if not is_base and key in base_cpu else None
+            cpu_v1 = labelled_pct(f"'{base_tag_name}'", cpu, base_cpu[key]) if show_v1 and key in base_cpu else None
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
