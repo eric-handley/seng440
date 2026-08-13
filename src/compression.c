@@ -64,25 +64,10 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
 
-    /*
-    s = ~s;
-    uint8_t sign_bit = s & 0x80;
-    
-    uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
-
-    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
-
-    magnitude -= MAGNITUDE_BIAS;
-    
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
-    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
-
-    return out;
-    */
-
     s = vmvn_u8(s); // Invert back to normal as per mu law
     uint8x8_t sign_bits = vand_u8(s, vdup_n_u8(0x80));
 
+    // Equiv to uint8_t chord_index = (s ^ sign_bit) >> 4;
     int8x8_t chord_indecies = vreinterpret_s8_u8( vshr_n_u8( veor_u8(s, sign_bits) , 4) );
 
     int16x8_t shift_counts = vmovl_s8(        // Widen to u16
@@ -101,6 +86,8 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
 
     magnitudes = vsubq_u16(magnitudes, vdupq_n_u16(MAGNITUDE_BIAS));
 
+    // Cursed expression to shift sign bit to top bit of u16, then convert to s16 and shift right to extend the sign across all bits
+    // Equiv. to int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;
     int16x8_t const mask = vshrq_n_s16( 
         vreinterpretq_s16_u16(
             vshlq_n_u16(
@@ -111,8 +98,8 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
         15
     );
 
-    // int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
     // To convert to 2's complement: if negative, invert and add 1, if positive do nothing
+    // Equiv. to int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
     int16x8_t out = vaddq_s16(
         veorq_s16( vreinterpretq_s16_u16(magnitudes), mask ),
         vshrq_n_s16(
@@ -142,20 +129,6 @@ uint8_t compress_sample(int16_t s) {
     uint8_t code_word = (code_word_base | (sign_bit >> 8)) | // Restore sign bit in position 7. Must shift from bit 15 to 7 for uint8 output
                         ((magnitude >> (10 - clz)) & 0x0F);  // Shift ABCD to bits 0:3 and mask to complete codeword 
 
-    // Debug output
-    // printf("sign: %s / sample: %s / %5d\tmag (biased): %s / clz: %3d", 
-    //     u16_to_binary(sign_bit),
-    //     u16_to_binary(s), 
-    //     (int16_t)s, 
-    //     u16_to_binary(magnitude), 
-    //     clz
-    // );
-
-    // printf("\t codeword: %s / out: %s\n\n",
-    //     byte_to_binary(code_word_base),
-    //     byte_to_binary(code_word)
-    // );
-
     return ~code_word; // Invert sample to match mu-law spec
 }
 
@@ -170,8 +143,9 @@ int16_t decompress_sample(uint8_t s) {
 
     magnitude -= MAGNITUDE_BIAS;                                       // remove the magnitude bias to restore original magnitude
     
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;          // ough Shift up as unsigned int, then cast to signed so we get sign 
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;          // ough. Shift up as unsigned int, then cast to signed so we get sign 
                                                                        // extension and shift back down to get 0xFF if negative or 0x00 if positive
+
     int16_t out = (magnitude ^ mask) + (sign_bit >> 7);                // Convert back to twos-complement
                                                             
     return out;
