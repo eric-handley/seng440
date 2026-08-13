@@ -47,13 +47,17 @@ int16_t decompress_sample(uint8_t s) {
     s = ~s;
     uint8_t sign_bit = s & 0x80;
     
+    /*move up to reduce dependencies and allow for parallelism*/
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough Shift up as unsigned int, then cast to signed so we get sign 
+                                                              // extension and shift back down to get 0xFF if negative or 0x00 if positive
+    
+    
     uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
 
     uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
 
     magnitude -= MAGNITUDE_BIAS;
     
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
     int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
 
     return out;
