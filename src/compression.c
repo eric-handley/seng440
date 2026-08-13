@@ -3,27 +3,21 @@
 #define MAGNITUDE_BIAS 132
 
 uint8_t compress_sample(int16_t s) {
-    int16_t const mask = s >> 15;                            // Must be signed to allow sign extension when shifting
+    int16_t const mask = s >> 15;                            // Getting the sign bit. It must be signed to allow sign extension when shifting so that the mask is all 1's instead of 000...01
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
 
     magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
 
-    uint16_t sat = -(magnitude >> 15);                       // All 1s if bias pushed magnitude into bit 15 (e.g. INT16_MIN), else 0
+    uint16_t sat = -(magnitude >> 15);                       // All 1s (-1) if bias pushed magnitude into bit 15 (e.g. INT16_MIN), else 0
     magnitude = (magnitude & ~sat) | (0x7FFF & sat);         // Branchless clamp to 0x7FFF so it maps to the top codeword instead of underflowing clz
-
-    // asm volatile (
-    //     "usat\t%0, #15, %1\n"
-    //     : "=r" (magnitude)
-    //     : "r" (magnitude), "r" (MAGNITUDE_BIAS)
-    // );
 
     uint8_t clz = __clz16_inline(magnitude) - 1;             // -1 to remove zero in place of sign bit
 
     uint8_t chord_index = 7 - clz;
-    uint8_t code_word_base = chord_index << 4;               // Shift chord bits into position
+    uint8_t code_word_base = chord_index << 4;               // Shift chord bits into position = 0b0XXX0000
 
-    uint8_t code_word = (code_word_base | (sign_bit >> 8)) | // Restore sign bit from bit 15 to 7 for uint8 output
+    uint8_t code_word = (code_word_base | (sign_bit >> 8)) | // Restore sign bit in position 7. Must shift from bit 15 to 7 for uint8 output
                         ((magnitude >> (10 - clz)) & 0x0F);  // Shift ABCD to bits 0:3 and mask to complete codeword 
 
     // Debug output
@@ -40,20 +34,23 @@ uint8_t compress_sample(int16_t s) {
     //     byte_to_binary(code_word)
     // );
 
-    return code_word;
+    return ~code_word; // Invert sample to match mu-law spec
 }
 
 int16_t decompress_sample(uint8_t s) {
+    s = ~s;                                                            // Uninvert sample to match mu-law spec
     uint8_t sign_bit = s & 0x80;
-    
-    uint8_t chord_index = (s ^ sign_bit) >> 4;
 
-    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
+    uint8_t chord_index = (s ^ sign_bit) >> 4;                         // Remove sign bit and shift chord bits into position 0:2
 
-    magnitude -= MAGNITUDE_BIAS;
-    
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
-    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
+    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));   // Keep only the lower 4 bits (ABCD) and add leading 1 to form 5-bit value (1ABCD).
+                                                                       // Shift left by chord_index + 3 to restore magnitude to original position
+
+    magnitude -= MAGNITUDE_BIAS;                                       // remove the magnitude bias to restore original magnitude
+
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;          // ough Shift up as unsigned int, then cast to signed so we get sign 
+                                                                       // extension and shift back down to get 0xFF if negative or 0x00 if positive
+    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);                // Convert back to twos-complement
 
     return out;
 }
