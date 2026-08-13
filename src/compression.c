@@ -12,21 +12,21 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
                                                 // so this is equivalent to shifting each one individually with sign extension
                                                 // Elements become 0xFFFF if the sample was negative and 0x0000 if positive
 
-    // Vectorized version of uint16_t magnitude = ((s + mask) ^ mask); adding mask = -1 changes magnitude appropriately if it was negative, and doesn't change it if it was positive the bit flip                                               
-    uint16x8_t magnitudes = veorq_u16(              // veorq_u16 = XOR
+    // Vectorized version of uint16_t magnitude = ((s + mask) ^ mask);                                                
+    uint16x8_t magnitudes = veorq_u16(              // veorq_u16 = XOR. 
         vreinterpretq_u16_s16(vaddq_s16(s, masks)), // Cast vec int16 -> vec uint16
         vreinterpretq_u16_s16(masks)                // Sign-extended masks can now also be cast
     ); 
 
-    uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));  // vdupq_n_u16 creates a vector with 0x8000 in each element position. 
+    uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));
     
-    uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); // Put bias in each element position in a q vector
+    uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); // Put bias in each element position
     magnitudes = vaddq_u16(magnitudes, mag_bias_vec);            // Bias samples so leading 1s match chord boundaries
 
-    magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF vminq_u16 = take min
+    magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF
 
     // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-    uint8x8_t clz = vmovn_u16(                           // Narrow each element to 8 bits
+    uint8x8_t clz = vmovn_u16(                           // Narrow each element to 8 bytes
         vsubq_u16(vclzq_u16(magnitudes), vdupq_n_u16(1)) // -1 to remove zero in place of sign bit
     );
     
@@ -56,7 +56,7 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
         )
     );
 
-    return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec that prefers more 1's than 0's 
+    return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec
 }
 
 int16x8_t vector_decompress_samples(uint8x8_t s) {
@@ -64,6 +64,62 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
 
+    /*
+    s = ~s;
+    uint8_t sign_bit = s & 0x80;
+    
+    uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
+
+    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
+
+    magnitude -= MAGNITUDE_BIAS;
+    
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
+    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
+
+    return out;
+    */
+
+    s = vmvn_u8(s);
+    uint8x8_t sign_bits = vand_u8(s, vdup_n_u8(0x80));
+
+    int8x8_t chord_indecies = vreinterpret_s8_u8( vshr_n_u8( veor_u8(s, sign_bits) , 4) );
+
+    int16x8_t shift_counts = vmovl_s8(        // Widen to u16
+        vadd_s8(chord_indecies, vdup_n_s8(3)) // shift_count = chord_index + 3
+    );
+
+    uint16x8_t magnitudes = vshlq_u16(
+        vmovl_u8(                             // Widen to u16 so the shift doesn't overflow
+            vorr_u8(                          // Equiv. to uint16_t magnitude = (((s & 0x0F) | 0x10) << (shift_count));
+                vand_u8(s, vdup_n_u8(0x0F)), 
+                vdup_n_u8(0x10)
+            )
+        ),
+        shift_counts
+    );
+
+    magnitudes = vsubq_u16(magnitudes, vdupq_n_u16(MAGNITUDE_BIAS));
+
+    int16x8_t const mask = vshrq_n_s16( 
+        vreinterpretq_s16_u16(
+            vshlq_n_u16(
+                vmovl_u8(s),
+                8
+            )
+        ),
+        15
+    );
+
+    int16x8_t out = vaddq_s16(
+        veorq_s16( vreinterpretq_s16_u16(magnitudes), mask ),
+        vshrq_n_s16(
+            vreinterpretq_s16_u16(vmovl_u8(sign_bits)),
+            7
+        )
+    );
+
+    return out;
 }
 
 uint8_t compress_sample(int16_t s) {
@@ -155,34 +211,20 @@ wav_t* decompress_wav(wav_t* in) {
         exit(1);
     }
 
-    uint16_t newBlockAlign = out->fmt.nBlockAlign;
+    uint8_t  *in_samples  = in->data.samples;
+    int16_t  *out_samples = (int16_t *)out->data.samples;
+    uint32_t num_samples = in->data.cksize;
 
-    for (uint32_t i = 0; i < num_frames; ++i) {
-        uint8_t *frame = &in->data.samples[i * blockAlign];
-
-        int16_t l_sample = *frame;
-        int16_t r_sample = *(frame+1);
-        
-        int16_t l_processed = decompress_sample(l_sample);
-        int16_t r_processed = decompress_sample(r_sample);
-
-        uint8_t *out_frame = &out->data.samples[i * newBlockAlign];
-
-        uint8_t l_sample_low  = (uint8_t)(l_processed);
-        uint8_t l_sample_high = (uint8_t)(l_processed >> 8);
-
-        uint8_t r_sample_low  = (uint8_t)(r_processed);
-        uint8_t r_sample_high = (uint8_t)(r_processed >> 8);
-
-        // // print l_processed and l_sample_low and l_sample_high in binary to sanity check
-        // printf("l_processed: %s / l_sample_low: %s / l_sample_high: %s\n", u16_to_binary(l_processed), byte_to_binary(l_sample_low), byte_to_binary(l_sample_high));
-        // printf("r_processed: %s / r_sample_low: %s / r_sample_high: %s\n", u16_to_binary(r_processed), byte_to_binary(r_sample_low), byte_to_binary(r_sample_high));
-
-        *out_frame       = l_sample_low;
-        *(out_frame + 1) = l_sample_high;
-        *(out_frame + 2) = r_sample_low;
-        *(out_frame + 3) = r_sample_high;
+    uint32_t i = 0;
+    for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
+        uint8x8_t samples = vld1_u8(&in_samples[i]);
+        int16x8_t decompressed = vector_decompress_samples(samples);
+        vst1q_s16(&out_samples[i], decompressed);
     }
 
-    return out;    
+    for (; i < num_samples; ++i) {                          // Remaining (< 8) samples
+        out_samples[i] = decompress_sample(in_samples[i]);
+    }
+
+    return out;
 }
