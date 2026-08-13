@@ -25,7 +25,7 @@ wav_t *read_wav(const char* filepath) {
 }
 
 wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSample, uint32_t num_frames, uint16_t format_tag) {
-    uint16_t block_align = nChannels * (wBitsPerSample / 8);
+    uint16_t block_align = nChannels * (wBitsPerSample / 8);                //block size in bytes = bytes per sample * (number of channels = number of samples per block)
     uint32_t data_size = num_frames * block_align;
 
     size_t total = sizeof(wav_header_t) + sizeof(wav_fmt_t)
@@ -42,8 +42,8 @@ wav_t *new_wav(uint16_t nChannels, uint32_t nSamplesPerSec, uint16_t wBitsPerSam
     wav->header.wavID = 0x45564157;                                         // "WAVE" little-endian
 
     memcpy(wav->fmt.ckID, "fmt ", 4);
-    wav->fmt.cksize = 16;                                                   // 16 for PCM
-    wav->fmt.wFormatTag = format_tag;
+    wav->fmt.cksize = 16;                                                   // 16 for PCM  
+    wav->fmt.wFormatTag = format_tag;                                       // 1 for PCM 6 for a law and 7 mu law
     wav->fmt.nChannels = nChannels;
     wav->fmt.nSamplesPerSec = nSamplesPerSec;
     wav->fmt.nAvgBytesPerSec = nSamplesPerSec * block_align;

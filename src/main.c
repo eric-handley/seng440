@@ -48,6 +48,11 @@ int main(int argc, char* argv[]) {
     }
 
     wav_t* output = do_compress ? compress_wav(input) : decompress_wav(input);
+    //Note the way this is written, we can't do compression and decompression at the same time, only one or the other
+
+    if (do_decompress && do_compress) {//the above will have already done the compression
+        output = decompress_wav(output);
+    }
     
     // print_wav_info(output);
     
