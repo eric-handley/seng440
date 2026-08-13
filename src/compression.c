@@ -80,7 +80,7 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     return out;
     */
 
-    s = vmvn_u8(s);
+    s = vmvn_u8(s); // Invert back to normal as per mu law
     uint8x8_t sign_bits = vand_u8(s, vdup_n_u8(0x80));
 
     int8x8_t chord_indecies = vreinterpret_s8_u8( vshr_n_u8( veor_u8(s, sign_bits) , 4) );
@@ -104,13 +104,15 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     int16x8_t const mask = vshrq_n_s16( 
         vreinterpretq_s16_u16(
             vshlq_n_u16(
-                vmovl_u8(s),
+                vmovl_u8(s),                  // Widen from 8 bits to 16 bits so we can shift without overflowing
                 8
             )
         ),
         15
     );
 
+    // int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
+    // To convert to 2's complement: if negative, invert and add 1, if positive do nothing
     int16x8_t out = vaddq_s16(
         veorq_s16( vreinterpretq_s16_u16(magnitudes), mask ),
         vshrq_n_s16(
