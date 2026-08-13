@@ -191,10 +191,10 @@ def benchmark_tag(tag: TagInfo):
 
         asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
         asm_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
-        # Skip the v1 delta when the previous tag is v1 itself, since it would
-        # just duplicate the since-last-tag delta. The v1 column always compares
-        # against the baseline tag at O0.
-        show_v1 = not is_base and prev_tag_name != base_tag_name
+        # The v1 column always compares against the baseline tag at O0, so it's
+        # shown for every non-baseline tag (it no longer duplicates the
+        # since-last-tag delta even when the previous tag is v1 itself).
+        show_v1 = not is_base
         asm_v1 = labelled_pct(f"'{base_tag_name}' O0", asm_lines, base_asm[0]) if show_v1 and 0 in base_asm else None
         if is_base:
             base_asm[opt_level] = asm_lines
