@@ -48,11 +48,11 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     uint8x8_t code_words = vorr_u8(
         vorr_u8(
             code_word_bases, 
-            vmovn_u16(vshrq_n_u16(sign_bits, 8)) // Restore sign bit in position 7 of each element, then take only the low halves of u16
+            vmovn_u16(vshrq_n_u16(sign_bits, 8))            // Restore sign bit in position 7 of each element, then take only the low halves of u16
         ),
         vand_u8(
             vmovn_u16(vshlq_u16(magnitudes, shift_counts)), // magnitude >> (10 - clz), narrowed (take low half)
-            vdup_n_u8(0x0F) // Only keep the lower 4 bits of each element (ABCD) to complete codeword
+            vdup_n_u8(0x0F)                                 // Only keep the lower 4 bits of each element (ABCD) to complete codeword
         )
     );
 
@@ -102,18 +102,20 @@ uint8_t compress_sample(int16_t s) {
 }
 
 int16_t decompress_sample(uint8_t s) {
-    s = ~s;
+    s = ~s;                                                            // Uninvert sample to match mu-law spec
     uint8_t sign_bit = s & 0x80;
     
-    uint8_t chord_index = (s ^ sign_bit) >> 4;  // Remove sign bit and shift chord bits into position 0:2
+    uint8_t chord_index = (s ^ sign_bit) >> 4;                         // Remove sign bit and shift chord bits into position 0:2
 
-    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));
+    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));   // Keep only the lower 4 bits (ABCD) and add leading 1 to form 5-bit value (1ABCD).
+                                                                       // Shift left by chord_index + 3 to restore magnitude to original position
 
-    magnitude -= MAGNITUDE_BIAS;
+    magnitude -= MAGNITUDE_BIAS;                                       // remove the magnitude bias to restore original magnitude
     
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15; // ough
-    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
-
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;          // ough Shift up as unsigned int, then cast to signed so we get sign 
+                                                                       // extension and shift back down to get 0xFF if negative or 0x00 if positive
+    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);                // Convert back to twos-complement
+                                                            
     return out;
 }
 
