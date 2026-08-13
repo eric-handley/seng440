@@ -12,21 +12,21 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
                                                 // so this is equivalent to shifting each one individually with sign extension
                                                 // Elements become 0xFFFF if the sample was negative and 0x0000 if positive
 
-    // Vectorized version of uint16_t magnitude = ((s + mask) ^ mask);                                                
-    uint16x8_t magnitudes = veorq_u16(              // veorq_u16 = XOR. 
+    // Vectorized version of uint16_t magnitude = ((s + mask) ^ mask); adding mask = -1 changes magnitude appropriately if it was negative, and doesn't change it if it was positive the bit flip                                               
+    uint16x8_t magnitudes = veorq_u16(              // veorq_u16 = XOR
         vreinterpretq_u16_s16(vaddq_s16(s, masks)), // Cast vec int16 -> vec uint16
         vreinterpretq_u16_s16(masks)                // Sign-extended masks can now also be cast
     ); 
 
-    uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));
+    uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));  // vdupq_n_u16 creates a vector with 0x8000 in each element position. 
     
-    uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); // Put bias in each element position
+    uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); // Put bias in each element position in a q vector
     magnitudes = vaddq_u16(magnitudes, mag_bias_vec);            // Bias samples so leading 1s match chord boundaries
 
-    magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF
+    magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF vminq_u16 = take min
 
     // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-    uint8x8_t clz = vmovn_u16(                           // Narrow each element to 8 bytes
+    uint8x8_t clz = vmovn_u16(                           // Narrow each element to 8 bits
         vsubq_u16(vclzq_u16(magnitudes), vdupq_n_u16(1)) // -1 to remove zero in place of sign bit
     );
     
@@ -51,12 +51,12 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
             vmovn_u16(vshrq_n_u16(sign_bits, 8)) // Restore sign bit in position 7 of each element, then take only the low halves of u16
         ),
         vand_u8(
-            vmovn_u16(vshlq_u16(magnitudes, shift_counts)), // magnitude >> (10 - clz), narrowed
-            vdup_n_u8(0x0F)
+            vmovn_u16(vshlq_u16(magnitudes, shift_counts)), // magnitude >> (10 - clz), narrowed (take low half)
+            vdup_n_u8(0x0F) // Only keep the lower 4 bits of each element (ABCD) to complete codeword
         )
     );
 
-    return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec
+    return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec that prefers more 1's than 0's 
 }
 
 int16x8_t vector_decompress_samples(uint8x8_t s) {
