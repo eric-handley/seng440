@@ -11,29 +11,33 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     // Replaces manual magnitude calculation: uint16_t magnitude = ((s + mask) ^ mask);
     uint16x8_t magnitudes = vreinterpretq_u16_s16(vabsq_s16(s));
 
-    uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));
-    
+    // Get sign bits as 8x8 directly instead of shifting to lower 8 later
+    // vshrn_n shifts by n and narrows by half in one op (u16 -> u8)
+    uint8x8_t sign_bits = vand_u8(
+        vshrn_n_u16(vreinterpretq_u16_s16(s), 8), vdup_n_u8(0x80)
+    );
+
     uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); // Put bias in each element position
     magnitudes = vaddq_u16(magnitudes, mag_bias_vec);            // Bias samples so leading 1s match chord boundaries
 
     magnitudes = vminq_u16(magnitudes, vdupq_n_u16(0x7FFF));     // Clamp samples to 0x7FFF
 
     // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-    uint8x8_t clz = vmovn_u16( // Narrow each element to 8 bytes
-        vclzq_u16(magnitudes)  // Non-vectorized version subtracts one here, which is compiler optimized out when we use
-                               // (7 - clz) and (10 - clz) later. Vector expression can't be optimized the same way
-                               // so here we remove the subtraction and instead do (8 - clz) and (11 - clz) later
-    );
+    uint16x8_t clz_u16 = vclzq_u16(magnitudes); // Non-vectorized version subtracts one here, which is compiler optimized out when we use
+                                                // (7 - clz) and (10 - clz) later. Vector expression can't be optimized the same way
+                                                // so here we remove the subtraction and instead do (8 - clz) and (11 - clz) later
     
+    uint8x8_t clz_u8 = vmovn_u16(clz_u16); // Need for calculating chord, leaving clz_u16 separate saves op when calculating shift counts
+
     // Now using 64 bit instructions/registers for 8x8
-    uint8x8_t chord_indecies = vsub_u8(vdup_n_u8(8), clz);
+    uint8x8_t chord_indecies = vsub_u8(vdup_n_u8(8), clz_u8);
     uint8x8_t code_word_bases = vshl_n_u8(chord_indecies, 4); // Shift chord bits of each element into position = 0b0XXX0000
 
     // Cannot shift elements by variable amounts in one instruction. Need
     // per-lane shift count = clz - 10  (negative -> right shift by 10 - clz)
     // Needs to be negative as vshr (vec shift right) can only shift by const
     int16x8_t shift_counts = vsubq_s16(
-        vreinterpretq_s16_u16(vmovl_u8(clz)),
+        vreinterpretq_s16_u16(clz_u16),
         vdupq_n_s16(11)
     );
 
@@ -41,10 +45,7 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     // uint8_t code_word = (code_word_base | (sign_bit >> 8)) |
     //                     ((magnitude >> (10 - clz)) & 0x0F);
     uint8x8_t code_words = vorr_u8(
-        vorr_u8(
-            code_word_bases, 
-            vmovn_u16(vshrq_n_u16(sign_bits, 8))            // Restore sign bit in position 7 of each element, then take only the low halves of u16
-        ),
+        vorr_u8(code_word_bases, sign_bits),                // Sign bits already in top position of each 8bit element
         vand_u8(
             vmovn_u16(vshlq_u16(magnitudes, shift_counts)), // magnitude >> (10 - clz), narrowed (take low half)
             vdup_n_u8(0x0F)                                 // Only keep the lower 4 bits of each element (ABCD) to complete codeword
