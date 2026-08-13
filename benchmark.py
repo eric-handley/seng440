@@ -109,11 +109,12 @@ def labelled_pct(label: str, value: float, baseline: float) -> str:
 OPT_SLOT_W = len("Ox: ") + PCT_NUM_W + 1
 
 def tag_slot_w() -> int:
-    return 1 + pct_tag_label_len + len("': ") + PCT_NUM_W + 1
+    # The label is the previous tag's name plus the compared opt level (" Ox").
+    return 1 + pct_tag_label_len + len("' Ox: ") + PCT_NUM_W + 1
 
 def v1_slot_w() -> int:
-    # The v1 slot's label is always the baseline tag's name.
-    return 1 + len(base_tag_name or "") + len("': ") + PCT_NUM_W + 1
+    # The v1 slot's label is always the baseline tag's name plus " O0".
+    return 1 + len(base_tag_name or "") + len("' O0: ") + PCT_NUM_W + 1
 
 def build_group(opt_entry, tag_entry, v1_entry) -> str:
     # Render the "(...)" delta group with fixed slots, padding a slot with
@@ -189,11 +190,12 @@ def benchmark_tag(tag: TagInfo):
             decompress_results.append(benchmark_command("./build/out -d -i build/compressed.wav -o build/decompressed.wav"))
 
         asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
-        asm_tag = labelled_pct(f"'{prev_tag_name}'", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
+        asm_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
         # Skip the v1 delta when the previous tag is v1 itself, since it would
-        # just duplicate the since-last-tag delta.
+        # just duplicate the since-last-tag delta. The v1 column always compares
+        # against the baseline tag at O0.
         show_v1 = not is_base and prev_tag_name != base_tag_name
-        asm_v1 = labelled_pct(f"'{base_tag_name}'", asm_lines, base_asm[opt_level]) if show_v1 and opt_level in base_asm else None
+        asm_v1 = labelled_pct(f"'{base_tag_name}' O0", asm_lines, base_asm[0]) if show_v1 and 0 in base_asm else None
         if is_base:
             base_asm[opt_level] = asm_lines
         prev_asm[opt_level] = asm_lines
@@ -205,8 +207,9 @@ def benchmark_tag(tag: TagInfo):
 
             cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation]) if opt_level > 0 else None
             key = (opt_level, operation)
-            cpu_tag = labelled_pct(f"'{prev_tag_name}'", cpu, prev_cpu[key]) if key in prev_cpu else None
-            cpu_v1 = labelled_pct(f"'{base_tag_name}'", cpu, base_cpu[key]) if show_v1 and key in base_cpu else None
+            base_key = (0, operation)
+            cpu_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", cpu, prev_cpu[key]) if key in prev_cpu else None
+            cpu_v1 = labelled_pct(f"'{base_tag_name}' O0", cpu, base_cpu[base_key]) if show_v1 and base_key in base_cpu else None
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
