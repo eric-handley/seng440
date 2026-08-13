@@ -222,7 +222,7 @@ else:
     stashed = "No local changes to save" not in stash_output
 
     try:
-        tags = execute("git for-each-ref refs/tags --format='%(refname:short) %(objectname:short)'").removesuffix("\n")
+        tags = execute("git for-each-ref refs/tags --sort=creatordate --format='%(refname:short) %(objectname:short)'").removesuffix("\n")
         tags = [TagInfo(name, commit) for name, commit in (t.split(' ') for t in tags.split('\n'))]
 
         # Size the tag-delta column to the longest tag name (the label is always
