@@ -6,17 +6,10 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
     // Theoretically 128/8 = 16 samples could be returned from this function
     // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
-
     // q instructions: use 128bit registers
-    int16x8_t const masks = vshrq_n_s16(s, 15); // Shift all individual elements by 15. Bits do not spill into lower elements
-                                                // so this is equivalent to shifting each one individually with sign extension
-                                                // Elements become 0xFFFF if the sample was negative and 0x0000 if positive
 
-    // Vectorized version of uint16_t magnitude = ((s + mask) ^ mask);                                                
-    uint16x8_t magnitudes = veorq_u16(              // veorq_u16 = XOR. 
-        vreinterpretq_u16_s16(vaddq_s16(s, masks)), // Cast vec int16 -> vec uint16
-        vreinterpretq_u16_s16(masks)                // Sign-extended masks can now also be cast
-    ); 
+    // Replaces manual magnitude calculation: uint16_t magnitude = ((s + mask) ^ mask);
+    uint16x8_t magnitudes = vreinterpretq_u16_s16(vabsq_s16(s));
 
     uint16x8_t sign_bits = vandq_u16(vreinterpretq_u16_s16(s), vdupq_n_u16(0x8000));
     
