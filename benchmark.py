@@ -6,7 +6,6 @@ import glob
 import os
 import re
 import shutil
-import time
 import resource
 import argparse
 from dataclasses import dataclass
@@ -40,15 +39,13 @@ def execute(command_str: str, print_out: bool = False):
     
     return result.stdout
 
-def benchmark_command(cmd: str) -> tuple[float, float]:
+def benchmark_command(cmd: str) -> float:
     cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    wall_start = time.perf_counter()
     execute(cmd)
-    wall_elapsed = time.perf_counter() - wall_start
     cpu_after = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpu_elapsed = (cpu_after.ru_utime + cpu_after.ru_stime) - (cpu_before.ru_utime + cpu_before.ru_stime)
 
-    return (wall_elapsed, cpu_elapsed)
+    return cpu_elapsed
 
 def build_with_args(args: str):
     os.makedirs("build", exist_ok=True)
@@ -163,8 +160,7 @@ def benchmark_tag(tag: TagInfo):
         asm_str = f"\tasm: {asm_lines:>4} lines  " + build_group(asm_opt, asm_tag)
 
         def report(operation: str, results):
-            wall = sum(r[0] for r in results) / NUM_AVGING_RUNS
-            cpu = sum(r[1] for r in results) / NUM_AVGING_RUNS
+            cpu = sum(results) / NUM_AVGING_RUNS
 
             cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation]) if opt_level > 0 else None
             key = (opt_level, operation)
@@ -174,7 +170,6 @@ def benchmark_tag(tag: TagInfo):
 
             line = "\t\t"
             line += pad(f"{operation}:", 12)
-            line += pad(f"wall: {wall:.4f}s\t", 14)
             line += pad(f"cpu: {cpu:.4f}s", 13)
             line += pad(build_group(cpu_opt, cpu_tag), pct_col_width()) + "  "
             line += asm_str
