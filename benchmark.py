@@ -102,24 +102,38 @@ OPT_SLOT_W = len("Ox: ") + PCT_NUM_W + 1
 def tag_slot_w() -> int:
     return 1 + pct_tag_label_len + len("': ") + PCT_NUM_W + 1
 
-def build_group(opt_entry, tag_entry) -> str:
+def v1_slot_w() -> int:
+    # The v1 slot's label is always the baseline tag's name.
+    return 1 + len(base_tag_name or "") + len("': ") + PCT_NUM_W + 1
+
+def build_group(opt_entry, tag_entry, v1_entry) -> str:
     # Render the "(...)" delta group with fixed slots, padding a slot with
     # spaces when its delta is absent so the remaining columns still line up.
-    if opt_entry is None and tag_entry is None:
+    if opt_entry is None and tag_entry is None and v1_entry is None:
         return ""
     if not compare_tags:
         return f"({opt_entry})" if opt_entry else ""
-    s1 = pad(opt_entry or "", OPT_SLOT_W)
-    if tag_entry is None:
-        return f"({s1})"
-    sep = ", " if opt_entry else "  "
-    return f"({s1}{sep}{tag_entry})"
+    slots = [(opt_entry, OPT_SLOT_W), (tag_entry, tag_slot_w()), (v1_entry, v1_slot_w())]
+    # Drop trailing empty slots so absent deltas don't leave stray separators.
+    while slots and slots[-1][0] is None:
+        slots.pop()
+    if not slots:
+        return ""
+    out = ""
+    for i, (text, width) in enumerate(slots):
+        if i > 0:
+            # Two spaces instead of ", " after an empty slot, so a missing delta
+            # doesn't leave a dangling comma.
+            out += ", " if slots[i - 1][0] else "  "
+        # Don't pad the last slot; nothing follows it to align against.
+        out += (text or "") if i == len(slots) - 1 else pad(text or "", width)
+    return f"({out})"
 
 def pct_col_width() -> int:
     # Width of the widest group that can appear, so the asm column lines up.
     if not compare_tags:
         return 1 + OPT_SLOT_W + 1
-    return 1 + OPT_SLOT_W + 2 + tag_slot_w() + 1
+    return 1 + OPT_SLOT_W + 2 + tag_slot_w() + 2 + v1_slot_w() + 1
 
 # Each metric's value from the previous tag, used to report its delta against
 # the tag benchmarked just before. cpu is keyed by (opt_level, operation); asm
@@ -129,10 +143,22 @@ prev_asm = {}
 prev_tag_name = None
 pct_tag_label_len = 0
 
+# The baseline (first tag benchmarked) metric values, so every later tag can
+# report its improvement over v1 as well as over the tag just before it. Keyed
+# the same as the prev_* maps. base_tag_name labels the delta.
+base_cpu = {}
+base_asm = {}
+base_tag_name = None
+
 def benchmark_tag(tag: TagInfo):
-    global prev_tag_name
+    global prev_tag_name, base_tag_name
 
     print(f"\n'{tag.name}' ({tag.commit}):")
+
+    # The first tag benchmarked is the baseline everything else is compared to.
+    is_base = compare_tags and base_tag_name is None
+    if is_base:
+        base_tag_name = tag.name
 
     # Each metric's previous-opt-level value for this tag, so a level can show
     # its improvement over the level immediately before it.
@@ -155,9 +181,12 @@ def benchmark_tag(tag: TagInfo):
 
         asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
         asm_tag = labelled_pct(f"'{prev_tag_name}'", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
+        asm_v1 = labelled_pct(f"'{base_tag_name}'", asm_lines, base_asm[opt_level]) if not is_base and opt_level in base_asm else None
+        if is_base:
+            base_asm[opt_level] = asm_lines
         prev_asm[opt_level] = asm_lines
         prev_opt_asm = asm_lines
-        asm_str = f"\tasm: {asm_lines:>4} lines  " + build_group(asm_opt, asm_tag)
+        asm_str = f"\tasm: {asm_lines:>4} lines  " + build_group(asm_opt, asm_tag, asm_v1)
 
         def report(operation: str, results):
             cpu = sum(results) / NUM_AVGING_RUNS
@@ -165,13 +194,16 @@ def benchmark_tag(tag: TagInfo):
             cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation]) if opt_level > 0 else None
             key = (opt_level, operation)
             cpu_tag = labelled_pct(f"'{prev_tag_name}'", cpu, prev_cpu[key]) if key in prev_cpu else None
+            cpu_v1 = labelled_pct(f"'{base_tag_name}'", cpu, base_cpu[key]) if not is_base and key in base_cpu else None
+            if is_base:
+                base_cpu[key] = cpu
             prev_cpu[key] = cpu
             prev_opt_cpu[operation] = cpu
 
             line = "\t\t"
             line += pad(f"{operation}:", 12)
             line += pad(f"cpu: {cpu:.4f}s", 13)
-            line += pad(build_group(cpu_opt, cpu_tag), pct_col_width()) + "  "
+            line += pad(build_group(cpu_opt, cpu_tag, cpu_v1), pct_col_width()) + "  "
             line += asm_str
             print(line.rstrip())
 
