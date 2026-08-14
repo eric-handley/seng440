@@ -4,10 +4,10 @@ import subprocess
 import shlex
 import glob
 import os
-import re
 import shutil
 import argparse
 import signal
+from datetime import datetime
 from dataclasses import dataclass
 
 # Turn SIGTERM into a normal exception so it unwinds through the same try/finally
@@ -47,30 +47,43 @@ def execute(command_str: str, print_out: bool = False):
     
     return result.stdout
 
-def benchmark_command(cmd: str) -> float:
+def benchmark_command(cmd: str):
     # Count CPU cycles with perf instead of measuring wall/CPU time: cycles is a
     # hardware counter, so unlike getrusage time it's immune to scheduler
     # quantization and CPU frequency scaling (1000 cycles is 1000 cycles at any
-    # clock). perf writes a CSV summary to stderr with -x; the first field of the
-    # "cycles" row is the count.
-    command_list = ["perf", "stat", "-x", ",", "-e", "cycles"] + shlex.split(cmd)
+    # clock). We also grab task-clock, perf's CPU time counter, purely for a
+    # human-readable seconds figure alongside the cycles. perf writes a CSV
+    # summary to stderr with -x; the first field of each event's row is its count.
+    command_list = ["perf", "stat", "-x", ",", "-e", "cycles,task-clock"] + shlex.split(cmd)
     result = subprocess.run(command_list, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         print(result.stderr)
         raise Exception(f"Command failed: {cmd}")
 
+    cycles = None
+    cpu_time = None
     for line in result.stderr.splitlines():
         fields = line.split(",")
+        if len(fields) < 3:
+            continue
         # perf appends an access modifier to the event name (e.g. "cycles:u" for
         # userspace-only counting at perf_event_paranoid >= 2), so drop the
         # ":<mods>" suffix before matching.
-        if len(fields) >= 3 and fields[2].strip().split(":")[0] == "cycles":
-            count = fields[0].strip()
+        event = fields[2].strip().split(":")[0]
+        count = fields[0].strip()
+        if event == "cycles":
             if count in ("<not counted>", "<not supported>"):
                 raise Exception(f"perf could not count cycles: {line}")
-            return float(count)
+            cycles = float(count)
+        elif event == "task-clock":
+            if count in ("<not counted>", "<not supported>"):
+                raise Exception(f"perf could not count task-clock: {line}")
+            # task-clock's raw CSV count is in nanoseconds; convert to seconds.
+            cpu_time = float(count) / 1e9
 
-    raise Exception(f"Could not parse perf cycles output:\n{result.stderr}")
+    if cycles is None or cpu_time is None:
+        raise Exception(f"Could not parse perf output:\n{result.stderr}")
+    return cycles, cpu_time
 
 def build_with_args(args: str):
     os.makedirs("build", exist_ok=True)
@@ -102,19 +115,12 @@ def build_asm(tag_name: str, opt_level: int) -> int:
             total_lines += sum(1 for _ in f)
     return total_lines
 
-# Fixed width for a percentage value (including sign), so numbers line up.
-# Wide enough for 4-digit speedups (e.g. "+3673.9").
-PCT_NUM_W = 7
+# GitHub renders inline math ($...$) with KaTeX, which honours \color but only
+# with a hex value, not rgb(). These match a bright terminal green/red.
+MD_GREEN = "#00c800"
+MD_RED = "#ff0000"
 
-_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
-
-def visible_len(s: str) -> int:
-    return len(_ANSI_RE.sub("", s))
-
-def pad(s: str, width: int) -> str:
-    return s + " " * max(0, width - visible_len(s))
-
-def labelled_pct(label: str, value: float, baseline: float, as_speedup: bool = False) -> str:
+def md_pct(value: float, baseline: float, as_speedup: bool = False) -> str:
     if as_speedup:
         # Speedup relative to baseline: value at 1/4 the baseline is 4x as fast,
         # shown as +300%. Unbounded upward, so big wins don't crush toward -100%
@@ -124,71 +130,64 @@ def labelled_pct(label: str, value: float, baseline: float, as_speedup: bool = F
     else:
         pct = (value - baseline) / baseline * 100
         improved = pct < 0
-    # Truecolor codes so the red/green overrides the shell theme.
-    colour = "\033[38;2;0;200;0m" if improved else "\033[38;2;255;0;0m"
-    return f"{label}: {colour}{pct:+{PCT_NUM_W}.1f}%\033[0m"
+    colour = MD_GREEN if improved else MD_RED
+    # \% escapes the percent sign inside math.
+    return f"$\\color{{{colour}}}{{{pct:+.1f}\\%}}$"
 
-# A delta group is "(<opt slot>, <tag slot>)". Each slot has a fixed width so
-# the opt and tag deltas each stay in their own column. The opt label is always
-# 2 chars ("Ox"); the tag label is the previous tag's name.
-OPT_SLOT_W = len("Ox: ") + PCT_NUM_W + 1
-
-def tag_slot_w() -> int:
-    # The label is the previous tag's name plus the compared opt level (" Ox").
-    return 1 + pct_tag_label_len + len("' Ox: ") + PCT_NUM_W + 1
-
-def v1_slot_w() -> int:
-    # The v1 slot's label is always the baseline tag's name plus " O2".
-    return 1 + len(base_tag_name or "") + len("' O2: ") + PCT_NUM_W + 1
-
-def build_group(opt_entry, tag_entry, v1_entry) -> str:
-    # Render the "(...)" delta group with fixed slots, padding a slot with
-    # spaces when its delta is absent so the remaining columns still line up.
-    if opt_entry is None and tag_entry is None and v1_entry is None:
-        return ""
-    if not compare_tags:
-        return f"({opt_entry})" if opt_entry else ""
-    slots = [(opt_entry, OPT_SLOT_W), (tag_entry, tag_slot_w()), (v1_entry, v1_slot_w())]
-    # Drop trailing empty slots so absent deltas don't leave stray separators.
-    while slots and slots[-1][0] is None:
-        slots.pop()
-    if not slots:
-        return ""
-    out = ""
-    for i, (text, width) in enumerate(slots):
-        if i > 0:
-            # Two spaces instead of ", " after an empty slot, so a missing delta
-            # doesn't leave a dangling comma.
-            out += ", " if slots[i - 1][0] else "  "
-        # Don't pad the last slot; nothing follows it to align against.
-        out += (text or "") if i == len(slots) - 1 else pad(text or "", width)
-    return f"({out})"
-
-def pct_col_width() -> int:
-    # Width of the widest group that can appear, so the asm column lines up.
-    if not compare_tags:
-        return 1 + OPT_SLOT_W + 1
-    return 1 + OPT_SLOT_W + 2 + tag_slot_w() + 2 + v1_slot_w() + 1
+def md_cell(entry) -> str:
+    return entry or ""
 
 # Each metric's value from the previous tag, used to report its delta against
-# the tag benchmarked just before. cpu is keyed by (opt_level, operation); asm
-# line count is keyed by opt_level. prev_tag_name labels the delta.
+# the tag benchmarked just before. cpu (cycles) and time (CPU seconds) are keyed
+# by (opt_level, operation); asm line count is keyed by opt_level. prev_tag_name
+# labels the delta.
 prev_cpu = {}
+prev_time = {}
 prev_asm = {}
 prev_tag_name = None
-pct_tag_label_len = 0
 
 # The baseline (first tag benchmarked) metric values, so every later tag can
 # report its improvement over v1 as well as over the tag just before it. Keyed
 # the same as the prev_* maps. base_tag_name labels the delta.
 base_cpu = {}
+base_time = {}
 base_asm = {}
 base_tag_name = None
+
+# Each tag gets its own table under a heading naming it, so the tag isn't
+# repeated in every row. The table is written row-by-row as benchmarking
+# proceeds (rather than buffered and dumped at the end) so results can be watched
+# building up live. Value columns hold the raw metric; each paired "Δ" column
+# holds one colour-coded comparison. The comparison targets (the previous tag and
+# the baseline tag) are fixed per table, so they name the column headers rather
+# than repeating in every cell.
+def build_md_header() -> str:
+    prev = prev_tag_name or ""
+    base = base_tag_name or ""
+    return (
+        "| build | op "
+        f"|  | cycles   | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
+        f"|  | cpu time | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
+        f"|  | asm      | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    )
+
+# The output file handle, opened once at startup below.
+md_file = None
+
+def write_md_row(row: str):
+    md_file.write(row + "\n")
+    md_file.flush()
+
+def write_md_table_header(tag: TagInfo):
+    md_file.write(f"\n## '{tag.name}' ({tag.commit})\n\n")
+    write_md_row(build_md_header())
 
 def benchmark_tag(tag: TagInfo):
     global prev_tag_name, base_tag_name
 
-    print(f"\n'{tag.name}' ({tag.commit}):")
+    print(f"Benchmarking '{tag.name}' ({tag.commit})...")
+    write_md_table_header(tag)
 
     # The first tag benchmarked is the baseline everything else is compared to.
     is_base = compare_tags and base_tag_name is None
@@ -198,6 +197,7 @@ def benchmark_tag(tag: TagInfo):
     # Each metric's previous-opt-level value for this tag, so a level can show
     # its improvement over the level immediately before it.
     prev_opt_cpu = {}
+    prev_opt_time = {}
     prev_opt_asm = 0
 
     for opt_level in range(0, 4):
@@ -212,48 +212,62 @@ def benchmark_tag(tag: TagInfo):
             compress_results.append(benchmark_command(f"./build/out -c -i {cli_args.wav} -o build/compressed.wav"))
             decompress_results.append(benchmark_command("./build/out -d -i build/compressed.wav -o build/decompressed.wav"))
 
-        asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
-        asm_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
         # The v1 column compares against the baseline tag at O2 (a sane default
         # build; O0 is never shipped and inflates the deltas), so it's shown for
         # every non-baseline tag.
         show_v1 = not is_base
-        asm_v1 = labelled_pct(f"'{base_tag_name}' O2", asm_lines, base_asm[2]) if show_v1 and 2 in base_asm else None
+        md_asm_opt = md_cell(md_pct(asm_lines, prev_opt_asm) if opt_level > 0 else None)
+        md_asm_tag = md_cell(md_pct(asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None)
+        md_asm_v1 = md_cell(md_pct(asm_lines, base_asm[2]) if show_v1 and 2 in base_asm else None)
         if is_base:
             base_asm[opt_level] = asm_lines
         prev_asm[opt_level] = asm_lines
         prev_opt_asm = asm_lines
-        asm_str = f"\tasm: {asm_lines:>4} lines  " + build_group(asm_opt, asm_tag, asm_v1)
 
         def report(operation: str, results):
-            cpu = sum(results) / NUM_AVGING_RUNS
+            cpu = sum(r[0] for r in results) / NUM_AVGING_RUNS
+            cpu_time = sum(r[1] for r in results) / NUM_AVGING_RUNS
 
-            cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation], as_speedup=True) if opt_level > 0 else None
             key = (opt_level, operation)
             base_key = (2, operation)
-            cpu_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", cpu, prev_cpu[key], as_speedup=True) if key in prev_cpu else None
-            cpu_v1 = labelled_pct(f"'{base_tag_name}' O2", cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None
+
+            md_cpu_opt = md_cell(md_pct(cpu, prev_opt_cpu[operation], as_speedup=True) if opt_level > 0 else None)
+            md_cpu_tag = md_cell(md_pct(cpu, prev_cpu[key], as_speedup=True) if key in prev_cpu else None)
+            md_cpu_v1 = md_cell(md_pct(cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None)
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
             prev_opt_cpu[operation] = cpu
 
-            line = "\t\t"
-            line += pad(f"{operation}:", 12)
-            line += pad(f"cycles: {cpu:,.0f}", 22)
-            line += pad(build_group(cpu_opt, cpu_tag, cpu_v1), pct_col_width()) + "  "
-            line += asm_str
-            print(line.rstrip())
+            md_time_opt = md_cell(md_pct(cpu_time, prev_opt_time[operation]) if opt_level > 0 else None)
+            md_time_tag = md_cell(md_pct(cpu_time, prev_time[key]) if key in prev_time else None)
+            md_time_v1 = md_cell(md_pct(cpu_time, base_time[base_key]) if show_v1 and base_key in base_time else None)
+            if is_base:
+                base_time[key] = cpu_time
+            prev_time[key] = cpu_time
+            prev_opt_time[operation] = cpu_time
 
-        print(f"\t{args}:")
+            # Only the compress row labels the build; the decompress row beneath
+            # it shares the same one, so its build cell is left blank.
+            build_cell = f"O{opt_level}" if operation == "compress" else ""
+            write_md_row(
+                f"| {build_cell} | {operation} "
+                f"|  | {cpu:,.0f} | {md_cpu_opt} | {md_cpu_tag} | {md_cpu_v1} "
+                f"|  | {cpu_time:.4f}s | {md_time_opt} | {md_time_tag} | {md_time_v1} "
+                f"|  | {asm_lines} | {md_asm_opt} | {md_asm_tag} | {md_asm_v1} |"
+            )
+
         report("compress", compress_results)
         report("decompress", decompress_results)
+
+        print(f"    - Completed level O{opt_level}")
 
     prev_tag_name = tag.name
 
 parser = argparse.ArgumentParser()
 parser.add_argument("wav", help="Path to the .wav file to compress during benchmarking")
 parser.add_argument("--current", action="store_true", help="Benchmark the current working tree as-is, without stashing or checking out tags")
+parser.add_argument("--exclude-current", action="store_true", help="When benchmarking tags, skip benchmarking the current working tree at the end")
 cli_args = parser.parse_args()
 
 # Tag deltas are only shown when benchmarking multiple tags, not in --current.
@@ -270,6 +284,12 @@ os.makedirs("build", exist_ok=True)
 wav_path = os.path.join("build", os.path.basename(cli_args.wav))
 shutil.copyfile(cli_args.wav, wav_path)
 cli_args.wav = wav_path
+
+# Open the output file up front so each tag's table can be appended (and flushed)
+# as it completes and watched building up live.
+out_file = f"benchmark-{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
+md_file = open(out_file, "w")
+print(f"Writing results to {out_file}")
 
 def benchmark_current():
     # The current working tree may be work in progress and fail to compile;
@@ -290,10 +310,6 @@ else:
         tags = execute("git for-each-ref refs/tags --sort=creatordate --format='%(refname:short) %(objectname:short)'").removesuffix("\n")
         tags = [TagInfo(name, commit) for name, commit in (t.split(' ') for t in tags.split('\n'))]
 
-        # Size the tag-delta column to the longest tag name (the label is always
-        # a previous tag's name, so tag names alone cover it).
-        pct_tag_label_len = max((len(t.name) for t in tags), default=0)
-
         for tag in tags:
             execute(f"git checkout {tag.commit}")
             benchmark_tag(tag)
@@ -307,5 +323,9 @@ else:
             execute("git stash pop")
 
     # Benchmark the (now restored) working tree last so tags can be compared
-    # against the current in-progress version.
-    benchmark_current()
+    # against the current in-progress version, unless --exclude-current.
+    if not cli_args.exclude_current:
+        benchmark_current()
+
+md_file.close()
+print(f"Wrote results to {out_file}")

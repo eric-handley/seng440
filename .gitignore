@@ -3,3 +3,5 @@ asm/
 
 samples/**
 samples/!SENG440*.wav
+
+benchmark*.md
