@@ -61,10 +61,16 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
 
     s = vmvn_u8(s); // Invert back to normal as per mu law
-    uint8x8_t sign_bits = vand_u8(s, vdup_n_u8(0x80));
 
-    // Equiv to uint8_t chord_index = (s ^ sign_bit) >> 4;
-    int8x8_t chord_indecies = vreinterpret_s8_u8( vshr_n_u8( veor_u8(s, sign_bits) , 4) );
+    // Naive implementation: uint8_t chord_index = (s ^ sign_bit) >> 4; 
+    // e.g. remove the sign bit and move the chord bits to 0:2
+    // Logically equivalent to shifting first, then masking only bits 0:2 which
+    // means sign_bits no longer needed
+    int8x8_t chord_indecies = vreinterpret_s8_u8(
+        vand_u8( 
+            vshr_n_u8(s, 4), 
+            vdup_n_u8(0x07)
+        ));
 
     int16x8_t shift_counts = vmovl_s8(        // Widen to u16
         vadd_s8(chord_indecies, vdup_n_s8(3)) // shift_count = chord_index + 3
@@ -82,26 +88,19 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
 
     magnitudes = vsubq_u16(magnitudes, vdupq_n_u16(MAGNITUDE_BIAS)); // Undo magnitude bias add
 
-    // Cursed expression to shift sign bit to top bit of u16, then convert to s16 and shift right to extend the sign across all bits
-    // Equiv. to int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;
-    int16x8_t const mask = vshrq_n_s16( 
-        vreinterpretq_s16_u16(
-            vshlq_n_u16(
-                vmovl_u8(s),                  // Widen from 8 bits to 16 bits so we can shift without overflowing
-                8
-            )
-        ),
-        15
-    );
+    // Mildly cursed expression to shift sign bit to top bit of u16, then convert to s16 and shift right to extend the sign across all bits
+    // Naive implementation: int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;
+    // Vectorized: vmovl_s8 widens s8 to s16 with sign extension (extend bit 7 into new top 8 bits), so if we cast the u8 -> s8
+    // before vmovl'ing it to s16, the first shift is not actually needed and second shift can be changed to 7 instead of 15
+    // e.g. 0b1xxx xxxx u8 -> 0b1xxx xxxx s8 -> 0b1111 1111 1xxx xxxx s16 -> 0b1111 1111 1111 1111 s16
+    int16x8_t const mask = vshrq_n_s16( vmovl_s8(vreinterpret_s8_u8(s)), 7 );
 
     // To convert to 2's complement: if negative, invert and add 1, if positive do nothing
-    // Equiv. to int16_t out = (magnitude ^ mask) + (sign_bit >> 7);
-    int16x8_t out = vaddq_s16(
+    // Naive implementation: int16_t out = (magnitude ^ mask) + (sign_bit >> 7); 
+    // Logically equivalent to (x ^ mask) - mask, which removes need to calculate sign bits
+    int16x8_t out = vsubq_s16(
         veorq_s16( vreinterpretq_s16_u16(magnitudes), mask ),
-        vshrq_n_s16(
-            vreinterpretq_s16_u16(vmovl_u8(sign_bits)),
-            7
-        )
+        mask
     );
 
     return out;
