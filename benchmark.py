@@ -19,7 +19,7 @@ def _handle_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
-NUM_AVGING_RUNS = 3
+NUM_AVGING_RUNS = 10
 
 @dataclass
 class TagInfo:
@@ -181,11 +181,9 @@ def benchmark_tag(tag: TagInfo):
         args = f"-O{opt_level} -static -Iinc"
 
         asm_lines = build_asm(tag.name, opt_level)
+        build_with_args(args)
 
         for _ in range(0, NUM_AVGING_RUNS):
-
-            build_with_args(args)
-
             compress_results.append(benchmark_command(f"./build/out -c -i {cli_args.wav} -o build/compressed.wav"))
             decompress_results.append(benchmark_command("./build/out -d -i build/compressed.wav -o build/decompressed.wav"))
 
