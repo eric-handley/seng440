@@ -7,6 +7,7 @@ import os
 import shutil
 import argparse
 import signal
+import time
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -54,8 +55,15 @@ def benchmark_command(cmd: str):
     # clock). We also grab task-clock, perf's CPU time counter, purely for a
     # human-readable seconds figure alongside the cycles. perf writes a CSV
     # summary to stderr with -x; the first field of each event's row is its count.
+    #
+    # task-clock is CPU time summed across all threads, so it stays flat (or
+    # rises) when work is parallelised and hides any threading win. Wall time is
+    # measured separately in Python around the whole subprocess: it's the elapsed
+    # real time, which is what actually drops when threads run in parallel.
     command_list = ["perf", "stat", "-x", ",", "-e", "cycles,task-clock"] + shlex.split(cmd)
+    wall_start = time.perf_counter()
     result = subprocess.run(command_list, capture_output=True, text=True, check=False)
+    wall_time = time.perf_counter() - wall_start
     if result.returncode != 0:
         print(result.stderr)
         raise Exception(f"Command failed: {cmd}")
@@ -83,7 +91,7 @@ def benchmark_command(cmd: str):
 
     if cycles is None or cpu_time is None:
         raise Exception(f"Could not parse perf output:\n{result.stderr}")
-    return cycles, cpu_time
+    return cycles, cpu_time, wall_time
 
 def build_with_args(args: str):
     os.makedirs("build", exist_ok=True)
@@ -143,6 +151,7 @@ def md_cell(entry) -> str:
 # labels the delta.
 prev_cpu = {}
 prev_time = {}
+prev_wall = {}
 prev_asm = {}
 prev_tag_name = None
 
@@ -151,6 +160,7 @@ prev_tag_name = None
 # the same as the prev_* maps. base_tag_name labels the delta.
 base_cpu = {}
 base_time = {}
+base_wall = {}
 base_asm = {}
 base_tag_name = None
 
@@ -168,8 +178,9 @@ def build_md_header() -> str:
         "| build | op "
         f"|  | cycles   | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
         f"|  | cpu time | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
+        f"|  | wall     | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
         f"|  | asm      | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
 
 # The output file handle, opened once at startup below.
@@ -198,6 +209,7 @@ def benchmark_tag(tag: TagInfo):
     # its improvement over the level immediately before it.
     prev_opt_cpu = {}
     prev_opt_time = {}
+    prev_opt_wall = {}
     prev_opt_asm = 0
 
     for opt_level in range(0, 4):
@@ -227,6 +239,7 @@ def benchmark_tag(tag: TagInfo):
         def report(operation: str, results):
             cpu = sum(r[0] for r in results) / NUM_AVGING_RUNS
             cpu_time = sum(r[1] for r in results) / NUM_AVGING_RUNS
+            wall = sum(r[2] for r in results) / NUM_AVGING_RUNS
 
             key = (opt_level, operation)
             base_key = (2, operation)
@@ -247,6 +260,14 @@ def benchmark_tag(tag: TagInfo):
             prev_time[key] = cpu_time
             prev_opt_time[operation] = cpu_time
 
+            md_wall_opt = md_cell(md_pct(wall, prev_opt_wall[operation]) if opt_level > 0 else None)
+            md_wall_tag = md_cell(md_pct(wall, prev_wall[key]) if key in prev_wall else None)
+            md_wall_v1 = md_cell(md_pct(wall, base_wall[base_key]) if show_v1 and base_key in base_wall else None)
+            if is_base:
+                base_wall[key] = wall
+            prev_wall[key] = wall
+            prev_opt_wall[operation] = wall
+
             # Only the compress row labels the build; the decompress row beneath
             # it shares the same one, so its build cell is left blank.
             build_cell = f"O{opt_level}" if operation == "compress" else ""
@@ -254,6 +275,7 @@ def benchmark_tag(tag: TagInfo):
                 f"| {build_cell} | {operation} "
                 f"|  | {cpu:,.0f} | {md_cpu_opt} | {md_cpu_tag} | {md_cpu_v1} "
                 f"|  | {cpu_time:.4f}s | {md_time_opt} | {md_time_tag} | {md_time_v1} "
+                f"|  | {wall:.4f}s | {md_wall_opt} | {md_wall_tag} | {md_wall_v1} "
                 f"|  | {asm_lines} | {md_asm_opt} | {md_asm_tag} | {md_asm_v1} |"
             )
 
