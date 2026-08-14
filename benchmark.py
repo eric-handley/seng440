@@ -7,7 +7,7 @@ import os
 import shutil
 import argparse
 import signal
-import time
+import re
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -57,13 +57,14 @@ def benchmark_command(cmd: str):
     # summary to stderr with -x; the first field of each event's row is its count.
     #
     # task-clock is CPU time summed across all threads, so it stays flat (or
-    # rises) when work is parallelised and hides any threading win. Wall time is
-    # measured separately in Python around the whole subprocess: it's the elapsed
-    # real time, which is what actually drops when threads run in parallel.
+    # rises) when work is parallelised and hides any threading win. For wall time
+    # we use the binary's own "Processed in <n> seconds" line instead: it brackets
+    # only the (de)compress call with CLOCK_MONOTONIC, excluding process startup
+    # and file I/O, so it's the elapsed real time that actually drops when threads
+    # run in parallel. Measuring wall around the whole subprocess here would bury
+    # that behind startup + reading/writing the WAV.
     command_list = ["perf", "stat", "-x", ",", "-e", "cycles,task-clock"] + shlex.split(cmd)
-    wall_start = time.perf_counter()
     result = subprocess.run(command_list, capture_output=True, text=True, check=False)
-    wall_time = time.perf_counter() - wall_start
     if result.returncode != 0:
         print(result.stderr)
         raise Exception(f"Command failed: {cmd}")
@@ -91,6 +92,13 @@ def benchmark_command(cmd: str):
 
     if cycles is None or cpu_time is None:
         raise Exception(f"Could not parse perf output:\n{result.stderr}")
+
+    # The binary prints this to stdout; it's the CLOCK_MONOTONIC-timed kernel call.
+    match = re.search(r"Processed in ([\d.]+) seconds", result.stdout)
+    if match is None:
+        raise Exception(f"Could not find 'Processed in' timing line:\n{result.stdout}")
+    wall_time = float(match.group(1))
+
     return cycles, cpu_time, wall_time
 
 def build_with_args(args: str):
