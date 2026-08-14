@@ -46,7 +46,18 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    struct timespec t_start, t_end;
+    clock_gettime(CLOCK_MONOTONIC, &t_start);
+
     wav_t* output = do_compress ? compress_wav(input) : decompress_wav(input);
+
+    clock_gettime(CLOCK_MONOTONIC, &t_end);
+    double processed_s = (t_end.tv_sec - t_start.tv_sec)
+                       + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
+    printf("Processed in %.8f seconds\n", processed_s);
+
+    // print_wav_info(output);
+
     write_wav(out_path, output);
 
     free(output);
