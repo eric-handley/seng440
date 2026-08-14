@@ -60,26 +60,45 @@ int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) 
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
 
-    s = vmvn_u8(s); // Invert back to normal as per mu law
+    // s = vmvn_u8(s); 
+    // Normally we would do this inversion here, but this appears to slow down the code,
+    // presumably by either blocking pipelining or preventing the compiler from optimizing.
+    // Instead, fold the inversion into each usage of s 
 
-    // Naive implementation: uint8_t chord_index = (s ^ sign_bit) >> 4; 
-    // e.g. remove the sign bit and move the chord bits to 0:2
-    // Logically equivalent to shifting first, then masking only bits 0:2 which
-    // means sign_bits no longer needed
-    int8x8_t chord_indecies = vreinterpret_s8_u8(
-        vand_u8( 
-            vshr_n_u8(s, 4), 
-            vdup_n_u8(0x07)
-        ));
+    // If we had inverted s upfront, the calculation for shift_counts would be done this way.
+    // To allow us to pipeline better, the chord index can be calculated 
+    // within the shift_counts expr by using vsra and vbic
+    /*    
+        // Naive implementation: uint8_t chord_index = (s ^ sign_bit) >> 4;
+        // e.g. remove the sign bit and move the chord bits to 0:2
+        // Logically equivalent to shifting first, then masking only bits 0:2 which
+        // means sign_bits no longer needed
 
-    int16x8_t shift_counts = vmovl_s8(        // Widen to u16
-        vadd_s8(chord_indecies, vdup_n_s8(3)) // shift_count = chord_index + 3
+        int8x8_t chord_indecies = vreinterpret_s8_u8(
+            vand_u8(
+                vshr_n_u8(s, 4),
+                vdup_n_u8(0x07)
+            ));
+
+        int16x8_t shift_counts = vmovl_s8(        // Widen to s16
+            vadd_s8(chord_indecies, vdup_n_s8(3)) // shift_count = chord_index + 3
+        );
+    */
+
+    int16x8_t shift_counts = vmovl_s8( vreinterpret_s8_u8( // Cast to s8 and widen to s16
+        vsra_n_u8(                                         // This is complicated. vsra = shift-right-accumulate allows us to fuse (>> 4) and (+ 3)
+            vdup_n_u8(3),                                  
+            vbic_u8(                                       // s is not yet inverted. vbic (AND-NOT) combines inversion with mask to allow us to get the chord index here
+                vdup_n_u8(0x70), s), 
+                4
+            )                       
+        )
     );
 
     uint16x8_t magnitudes = vshlq_u16(
         vmovl_u8(                             // Widen to u16 so the shift doesn't overflow
-            vorr_u8(                          // Equiv. to uint16_t magnitude = (((s & 0x0F) | 0x10) << (shift_count));
-                vand_u8(s, vdup_n_u8(0x0F)), 
+            vorr_u8(                          // Equiv. to uint16_t magnitude = (((s & 0x0F) | 0x10) << (shift_count)); except s is not yet inverted
+                vbic_u8(vdup_n_u8(0x0F), s),  // (~s) & 0x0F via bic (AND-NOT) allows the inversion to be combined with the and here
                 vdup_n_u8(0x10)
             )
         ),
@@ -93,7 +112,10 @@ int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) 
     // Vectorized: vmovl_s8 widens s8 to s16 with sign extension (extend bit 7 into new top 8 bits), so if we cast the u8 -> s8
     // before vmovl'ing it to s16, the first shift is not actually needed and second shift can be changed to 7 instead of 15
     // e.g. 0b1xxx xxxx u8 -> 0b1xxx xxxx s8 -> 0b1111 1111 1xxx xxxx s16 -> 0b1111 1111 1111 1111 s16
-    int16x8_t const mask = vshrq_n_s16( vmovl_s8(vreinterpret_s8_u8(s)), 7 );
+    int16x8_t const mask = vshrq_n_s16( vmovl_s8(vreinterpret_s8_u8(vmvn_u8(s))), 7 ); // s has not been inverted yet so do that here. Explaination: because we have eliminated the upfront-blocking ~s operation, 
+                                                                                       // operations that use s before this can be pipelined (because we can replace instructions that were using ~s with instructions that 
+                                                                                       // both invert s and do an operation on it at the same time). If we were to invert s upfront, we could use it here 
+                                                                                       // directly but the function overall will be slower because we wait on ~s to do two things instead of one
 
     // To convert to 2's complement: if negative, invert and add 1, if positive do nothing
     // Naive implementation: int16_t out = (magnitude ^ mask) + (sign_bit >> 7); 
