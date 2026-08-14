@@ -6,7 +6,6 @@ import glob
 import os
 import re
 import shutil
-import resource
 import argparse
 import signal
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ def _handle_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
-NUM_AVGING_RUNS = 10
+NUM_AVGING_RUNS = 5
 
 @dataclass
 class TagInfo:
@@ -49,12 +48,29 @@ def execute(command_str: str, print_out: bool = False):
     return result.stdout
 
 def benchmark_command(cmd: str) -> float:
-    cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    execute(cmd)
-    cpu_after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    cpu_elapsed = (cpu_after.ru_utime + cpu_after.ru_stime) - (cpu_before.ru_utime + cpu_before.ru_stime)
+    # Count CPU cycles with perf instead of measuring wall/CPU time: cycles is a
+    # hardware counter, so unlike getrusage time it's immune to scheduler
+    # quantization and CPU frequency scaling (1000 cycles is 1000 cycles at any
+    # clock). perf writes a CSV summary to stderr with -x; the first field of the
+    # "cycles" row is the count.
+    command_list = ["perf", "stat", "-x", ",", "-e", "cycles"] + shlex.split(cmd)
+    result = subprocess.run(command_list, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        print(result.stderr)
+        raise Exception(f"Command failed: {cmd}")
 
-    return cpu_elapsed
+    for line in result.stderr.splitlines():
+        fields = line.split(",")
+        # perf appends an access modifier to the event name (e.g. "cycles:u" for
+        # userspace-only counting at perf_event_paranoid >= 2), so drop the
+        # ":<mods>" suffix before matching.
+        if len(fields) >= 3 and fields[2].strip().split(":")[0] == "cycles":
+            count = fields[0].strip()
+            if count in ("<not counted>", "<not supported>"):
+                raise Exception(f"perf could not count cycles: {line}")
+            return float(count)
+
+    raise Exception(f"Could not parse perf cycles output:\n{result.stderr}")
 
 def build_with_args(args: str):
     os.makedirs("build", exist_ok=True)
@@ -215,7 +231,7 @@ def benchmark_tag(tag: TagInfo):
 
             line = "\t\t"
             line += pad(f"{operation}:", 12)
-            line += pad(f"cpu: {cpu:.4f}s", 13)
+            line += pad(f"cycles: {cpu:,.0f}", 22)
             line += pad(build_group(cpu_opt, cpu_tag, cpu_v1), pct_col_width()) + "  "
             line += asm_str
             print(line.rstrip())
