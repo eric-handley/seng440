@@ -103,7 +103,8 @@ def build_asm(tag_name: str, opt_level: int) -> int:
     return total_lines
 
 # Fixed width for a percentage value (including sign), so numbers line up.
-PCT_NUM_W = 6
+# Wide enough for 4-digit speedups (e.g. "+3673.9").
+PCT_NUM_W = 7
 
 _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
@@ -137,8 +138,8 @@ def tag_slot_w() -> int:
     return 1 + pct_tag_label_len + len("' Ox: ") + PCT_NUM_W + 1
 
 def v1_slot_w() -> int:
-    # The v1 slot's label is always the baseline tag's name plus " O0".
-    return 1 + len(base_tag_name or "") + len("' O0: ") + PCT_NUM_W + 1
+    # The v1 slot's label is always the baseline tag's name plus " O2".
+    return 1 + len(base_tag_name or "") + len("' O2: ") + PCT_NUM_W + 1
 
 def build_group(opt_entry, tag_entry, v1_entry) -> str:
     # Render the "(...)" delta group with fixed slots, padding a slot with
@@ -213,11 +214,11 @@ def benchmark_tag(tag: TagInfo):
 
         asm_opt = labelled_pct(f"O{opt_level - 1}", asm_lines, prev_opt_asm) if opt_level > 0 else None
         asm_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None
-        # The v1 column always compares against the baseline tag at O0, so it's
-        # shown for every non-baseline tag (it no longer duplicates the
-        # since-last-tag delta even when the previous tag is v1 itself).
+        # The v1 column compares against the baseline tag at O2 (a sane default
+        # build; O0 is never shipped and inflates the deltas), so it's shown for
+        # every non-baseline tag.
         show_v1 = not is_base
-        asm_v1 = labelled_pct(f"'{base_tag_name}' O0", asm_lines, base_asm[0]) if show_v1 and 0 in base_asm else None
+        asm_v1 = labelled_pct(f"'{base_tag_name}' O2", asm_lines, base_asm[2]) if show_v1 and 2 in base_asm else None
         if is_base:
             base_asm[opt_level] = asm_lines
         prev_asm[opt_level] = asm_lines
@@ -229,9 +230,9 @@ def benchmark_tag(tag: TagInfo):
 
             cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation], as_speedup=True) if opt_level > 0 else None
             key = (opt_level, operation)
-            base_key = (0, operation)
+            base_key = (2, operation)
             cpu_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", cpu, prev_cpu[key], as_speedup=True) if key in prev_cpu else None
-            cpu_v1 = labelled_pct(f"'{base_tag_name}' O0", cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None
+            cpu_v1 = labelled_pct(f"'{base_tag_name}' O2", cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
