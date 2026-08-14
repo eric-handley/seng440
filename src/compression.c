@@ -1,8 +1,6 @@
 #include "compression.h"
 
-#define MAGNITUDE_BIAS 132
-
-uint8x8_t __attribute__((always_inline)) vector_compress_samples(int16x8_t s) {
+static inline uint8x8_t __attribute__((always_inline)) vector_compress_samples(int16x8_t s) {
     // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
     // Theoretically 128/8 = 16 samples could be returned from this function
     // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
@@ -55,7 +53,7 @@ uint8x8_t __attribute__((always_inline)) vector_compress_samples(int16x8_t s) {
     return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec
 }
 
-int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) {
+static inline int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) {
     // Neon q registers are 128 bits so 128/8 = 16 compressed samples can be 
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
@@ -128,7 +126,7 @@ int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) 
     return out;
 }
 
-uint8_t __attribute__((always_inline)) compress_sample(int16_t s) {
+static inline uint8_t __attribute__((always_inline)) compress_sample(int16_t s) {
     int16_t const mask = s >> 15;                            // Getting the sign bit. It must be signed to allow sign extension when shifting so that the mask is all 1's instead of 000...01
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
@@ -149,7 +147,7 @@ uint8_t __attribute__((always_inline)) compress_sample(int16_t s) {
     return ~code_word;                                       // Invert sample to match mu-law spec
 }
 
-int16_t __attribute__((always_inline)) decompress_sample(uint8_t s) {
+static inline int16_t __attribute__((always_inline)) decompress_sample(uint8_t s) {
     s = ~s;                                                          // Uninvert sample to match mu-law spec
     
     uint8_t chord_index = (s >> 4) & 0x07;                           // Shift chord bits into position 0:2 and mask only these bits
@@ -168,18 +166,12 @@ int16_t __attribute__((always_inline)) decompress_sample(uint8_t s) {
     return out;
 }
 
-wav_t* compress_wav(wav_t* in) {
-    uint16_t blockAlign = in->fmt.nBlockAlign;
-    uint32_t num_frames = in->data.cksize / blockAlign;
-
-    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 8, num_frames, WAVE_FORMAT_MULAW);
-    if (out == NULL) {
-        exit(1);
-    }
-
-    int16_t *in_samples  = (int16_t *)in->data.samples;
-    uint8_t *out_samples = out->data.samples;
-    uint32_t num_samples = in->data.cksize / sizeof(int16_t);
+void* compress_wav_thread(void* arg) {
+    thread_args_t args = *((thread_args_t*)arg);
+    
+    int16_t *in_samples  = args.u16_buffer_p;
+    uint8_t *out_samples = args.u8_buffer_p;
+    uint32_t num_samples = args.num_samples;
 
     uint32_t i = 0;
     for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
@@ -192,8 +184,111 @@ wav_t* compress_wav(wav_t* in) {
         out_samples[i] = compress_sample(in_samples[i]);
     }
 
+    return NULL;
+}
+
+
+void* decompress_wav_thread(void* arg) {
+    // uint32_t i = 0;
+
+    // for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
+    //     uint8x8_t samples = vld1_u8(&in_samples[i]);
+    //     int16x8_t decompressed = vector_decompress_samples(samples);
+    //     vst1q_s16(&out_samples[i], decompressed);
+    // }
+
+    return NULL;
+}
+
+wav_t* compress_wav(wav_t* in) {
+    uint16_t blockAlign = in->fmt.nBlockAlign;
+    uint32_t num_frames = in->data.cksize / blockAlign;
+
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 8, num_frames, WAVE_FORMAT_MULAW);
+    if (out == NULL) {
+        exit(1);
+    }
+
+    int16_t *in_samples  = (int16_t *)in->data.samples;
+    uint8_t *out_samples = out->data.samples;
+    uint32_t num_samples = in->data.cksize / sizeof(int16_t);
+    
+    uint32_t samples_per_thread = num_samples / NUM_THREADS;
+
+    // Dispatch worker threads and bind them to a specific physical core
+    pthread_t threads[NUM_THREADS];
+    thread_args_t thread_args[NUM_THREADS]; 
+    cpu_set_t cpu;
+
+    for (uint8_t i = 0; i < NUM_THREADS; ++i) {
+        thread_args[i].u8_buffer_p  = out_samples + (i * samples_per_thread);
+        thread_args[i].u16_buffer_p = in_samples  + (i * samples_per_thread);
+        thread_args[i].num_samples  = samples_per_thread;
+
+        pthread_create(&threads[i], NULL, &compress_wav_thread,  (void*)&thread_args[i]);
+
+        // Bind thread i to core i
+        CPU_ZERO(&cpu);
+        CPU_SET(i, &cpu);
+        pthread_setaffinity_np(threads[i], sizeof(cpu), &cpu);
+    }
+    
+    for (uint8_t i = 0; i < NUM_THREADS; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+
+    uint32_t remaining_samples  = num_samples % NUM_THREADS; // Number of remaining samples not easily divisible among threads (should be <= 3)
+
+    for (uint32_t i = num_samples - remaining_samples; i < num_samples; ++i) { // Start at index of first unhandled sample
+        out_samples[i] = compress_sample(in_samples[i]);
+    }
+
     return out;
 }
+/*
+wav_t* decompress_wav(wav_t* in) {
+    uint16_t blockAlign = in->fmt.nBlockAlign;
+    uint32_t num_frames = in->data.cksize / blockAlign;
+
+    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames, WAVE_FORMAT_PCM);
+    if (out == NULL) {
+        exit(1);
+    }
+
+    uint8_t  *in_samples  = in->data.samples;
+    int16_t  *out_samples = (int16_t *)out->data.samples;
+    uint32_t num_samples = in->data.cksize;
+
+    uint32_t samples_per_thread = num_samples / NUM_THREADS;
+    
+    // Dispatch worker threads and bind them to a specific physical core
+    pthread_t threads[NUM_THREADS];
+    cpu_set_t cpu;
+
+    for (uint8_t i = 0; i < NUM_THREADS; ++i) {
+        uint8_t* buffer_start_thread_arg = 0;
+
+        pthread_create(&threads[i], NULL, &compress_wav_thread,  (void*)buffer_start_thread_arg);
+
+        // Bind thread i to core i
+        CPU_ZERO(&cpu);
+        CPU_SET(i, &cpu);
+        pthread_setaffinity_np(threads[i], sizeof(cpu), &cpu);
+    }
+    
+    for (uint8_t i = 0; i < NUM_THREADS; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+
+    uint32_t remaining_samples  = num_samples % NUM_THREADS; // Number of remaining samples not easily divisible among threads (should be <= 3)
+
+    for (uint32_t i = num_samples - remaining_samples; i < num_samples; ++i) { // Start at index of first unhandled sample
+        out_samples[i] = decompress_sample(in_samples[i]);
+    }
+
+    return out;
+}
+*/
 
 wav_t* decompress_wav(wav_t* in) {
     uint16_t blockAlign = in->fmt.nBlockAlign;
