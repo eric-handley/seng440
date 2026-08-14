@@ -187,15 +187,23 @@ void* compress_wav_thread(void* arg) {
     return NULL;
 }
 
-
 void* decompress_wav_thread(void* arg) {
-    // uint32_t i = 0;
+    thread_args_t args = *((thread_args_t*)arg);
+    
+    uint8_t *in_samples  = args.u8_buffer_p;
+    int16_t *out_samples = args.u16_buffer_p;
+    uint32_t num_samples = args.num_samples;
 
-    // for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
-    //     uint8x8_t samples = vld1_u8(&in_samples[i]);
-    //     int16x8_t decompressed = vector_decompress_samples(samples);
-    //     vst1q_s16(&out_samples[i], decompressed);
-    // }
+    uint32_t i = 0;
+    for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
+        uint8x8_t samples = vld1_u8(&in_samples[i]);
+        int16x8_t decompressed = vector_decompress_samples(samples);
+        vst1q_s16(&out_samples[i], decompressed);
+    }
+
+    for (; i < num_samples; ++i) {                          // Remaining (< 8) samples
+        out_samples[i] = decompress_sample(in_samples[i]);
+    }
 
     return NULL;
 }
@@ -215,12 +223,12 @@ wav_t* compress_wav(wav_t* in) {
     
     uint32_t samples_per_thread = num_samples / NUM_THREADS;
 
-    // Dispatch worker threads and bind them to a specific physical core
     pthread_t threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS]; 
     cpu_set_t cpu;
     pthread_attr_t attr;
-
+    
+    // Dispatch worker threads and bind them to a specific physical core
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
         thread_args[i].u8_buffer_p  = out_samples + (i * samples_per_thread);
         thread_args[i].u16_buffer_p = in_samples  + (i * samples_per_thread);
@@ -248,7 +256,7 @@ wav_t* compress_wav(wav_t* in) {
 
     return out;
 }
-/*
+
 wav_t* decompress_wav(wav_t* in) {
     uint16_t blockAlign = in->fmt.nBlockAlign;
     uint32_t num_frames = in->data.cksize / blockAlign;
@@ -264,19 +272,25 @@ wav_t* decompress_wav(wav_t* in) {
 
     uint32_t samples_per_thread = num_samples / NUM_THREADS;
     
-    // Dispatch worker threads and bind them to a specific physical core
     pthread_t threads[NUM_THREADS];
+    thread_args_t thread_args[NUM_THREADS]; 
     cpu_set_t cpu;
-
+    pthread_attr_t attr;
+    
+    // Dispatch worker threads and bind them to a specific physical core
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
-        uint8_t* buffer_start_thread_arg = 0;
-
-        pthread_create(&threads[i], NULL, &compress_wav_thread,  (void*)buffer_start_thread_arg);
+        thread_args[i].u8_buffer_p  = in_samples  + (i * samples_per_thread);
+        thread_args[i].u16_buffer_p = out_samples + (i * samples_per_thread);
+        thread_args[i].num_samples  = samples_per_thread;
 
         // Bind thread i to core i
+        pthread_attr_init(&attr);
         CPU_ZERO(&cpu);
         CPU_SET(i, &cpu);
-        pthread_setaffinity_np(threads[i], sizeof(cpu), &cpu);
+        pthread_attr_setaffinity_np(&attr, sizeof(cpu), &cpu);
+
+        pthread_create(&threads[i], &attr, &decompress_wav_thread, (void*)&thread_args[i]);
+        pthread_attr_destroy(&attr);
     }
     
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
@@ -286,34 +300,6 @@ wav_t* decompress_wav(wav_t* in) {
     uint32_t remaining_samples  = num_samples % NUM_THREADS; // Number of remaining samples not easily divisible among threads (should be <= 3)
 
     for (uint32_t i = num_samples - remaining_samples; i < num_samples; ++i) { // Start at index of first unhandled sample
-        out_samples[i] = decompress_sample(in_samples[i]);
-    }
-
-    return out;
-}
-*/
-
-wav_t* decompress_wav(wav_t* in) {
-    uint16_t blockAlign = in->fmt.nBlockAlign;
-    uint32_t num_frames = in->data.cksize / blockAlign;
-
-    wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames, WAVE_FORMAT_PCM);
-    if (out == NULL) {
-        exit(1);
-    }
-
-    uint8_t  *in_samples  = in->data.samples;
-    int16_t  *out_samples = (int16_t *)out->data.samples;
-    uint32_t num_samples = in->data.cksize;
-
-    uint32_t i = 0;
-    for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
-        uint8x8_t samples = vld1_u8(&in_samples[i]);
-        int16x8_t decompressed = vector_decompress_samples(samples);
-        vst1q_s16(&out_samples[i], decompressed);
-    }
-
-    for (; i < num_samples; ++i) {                          // Remaining (< 8) samples
         out_samples[i] = decompress_sample(in_samples[i]);
     }
 
