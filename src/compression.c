@@ -219,18 +219,21 @@ wav_t* compress_wav(wav_t* in) {
     pthread_t threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS]; 
     cpu_set_t cpu;
+    pthread_attr_t attr;
 
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
         thread_args[i].u8_buffer_p  = out_samples + (i * samples_per_thread);
         thread_args[i].u16_buffer_p = in_samples  + (i * samples_per_thread);
         thread_args[i].num_samples  = samples_per_thread;
 
-        pthread_create(&threads[i], NULL, &compress_wav_thread,  (void*)&thread_args[i]);
-
         // Bind thread i to core i
+        pthread_attr_init(&attr);
         CPU_ZERO(&cpu);
         CPU_SET(i, &cpu);
-        pthread_setaffinity_np(threads[i], sizeof(cpu), &cpu);
+        pthread_attr_setaffinity_np(&attr, sizeof(cpu), &cpu);
+
+        pthread_create(&threads[i], &attr, &compress_wav_thread, (void*)&thread_args[i]);
+        pthread_attr_destroy(&attr);
     }
     
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
