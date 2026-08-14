@@ -18,7 +18,7 @@ def _handle_sigterm(signum, frame):
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
-NUM_AVGING_RUNS = 5
+NUM_AVGING_RUNS = 3
 
 @dataclass
 class TagInfo:
