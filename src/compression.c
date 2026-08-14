@@ -175,10 +175,10 @@ void* compress_wav_thread(void* arg) {
     uint32_t num_samples = args.num_samples;
 
     uint32_t i = 0;
-    for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
-        int16x8_t samples = vld1q_s16(&in_samples[i]);
-        uint8x8_t compressed = vector_compress_samples(samples);
-        vst1_u8(&out_samples[i], compressed);
+    for (; i + 8 <= num_samples; i += 16) {                  // 8 samples per NEON register
+        uint8x8_t c0 = vector_compress_samples(vld1q_s16(&in_samples[i]));
+        uint8x8_t c1 = vector_compress_samples(vld1q_s16(&in_samples[i + 8]));
+        vst1q_u8(&out_samples[i], vcombine_u8(c0, c1));
     }
 
     return NULL;
@@ -192,7 +192,7 @@ void* decompress_wav_thread(void* arg) {
     uint32_t num_samples = args.num_samples;
 
     uint32_t i = 0;
-    for (; i + 8 <= num_samples; i += 8) {                  // 8 samples per NEON register
+    for (; i + 16 <= num_samples; i += 8) {                  // 8 samples per NEON register
         uint8x8_t samples = vld1_u8(&in_samples[i]);
         int16x8_t decompressed = vector_decompress_samples(samples);
         vst1q_s16(&out_samples[i], decompressed);
