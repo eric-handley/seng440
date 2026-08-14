@@ -124,24 +124,24 @@ uint8_t compress_sample(int16_t s) {
     uint8_t code_word = (code_word_base | (sign_bit >> 8)) | // Restore sign bit in position 7. Must shift from bit 15 to 7 for uint8 output
                         ((magnitude >> (10 - clz)) & 0x0F);  // Shift ABCD to bits 0:3 and mask to complete codeword 
 
-    return ~code_word; // Invert sample to match mu-law spec
+    return ~code_word;                                       // Invert sample to match mu-law spec
 }
 
 int16_t decompress_sample(uint8_t s) {
-    s = ~s;                                                            // Uninvert sample to match mu-law spec
-    uint8_t sign_bit = s & 0x80;
+    s = ~s;                                                          // Uninvert sample to match mu-law spec
     
-    uint8_t chord_index = (s ^ sign_bit) >> 4;                         // Remove sign bit and shift chord bits into position 0:2
+    uint8_t chord_index = (s >> 4) & 0x07;                           // Shift chord bits into position 0:2 and mask only these bits
 
-    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3));   // Keep only the lower 4 bits (ABCD) and add leading 1 to form 5-bit value (1ABCD).
-                                                                       // Shift left by chord_index + 3 to restore magnitude to original position
+    uint16_t magnitude = (((s & 0x0F) | 0x10) << (chord_index + 3)); // Keep only the lower 4 bits (ABCD) and add leading 1 to form 5-bit value (1ABCD).
+                                                                     // Shift left by chord_index + 3 to restore magnitude to original position
 
-    magnitude -= MAGNITUDE_BIAS;                                       // remove the magnitude bias to restore original magnitude
+    magnitude -= MAGNITUDE_BIAS;                                     // remove the magnitude bias to restore original magnitude
     
-    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;          // ough. Shift up as unsigned int, then cast to signed so we get sign 
-                                                                       // extension and shift back down to get 0xFF if negative or 0x00 if positive
+    int16_t const mask = (int16_t)(((uint16_t)s) << 8) >> 15;        // ough. Shift up as unsigned int, then cast to signed so we get sign 
+                                                                     // extension and shift back down to get 0xFF if negative or 0x00 if positive
 
-    int16_t out = (magnitude ^ mask) + (sign_bit >> 7);                // Convert back to twos-complement
+    int16_t out = (magnitude ^ mask) - mask;                         // Convert back to twos-complement 
+                                                                     // L.E. to int16_t out = (magnitude ^ mask) + (sign_bit >> 7); but removes need for sign_bit calculation
                                                             
     return out;
 }
