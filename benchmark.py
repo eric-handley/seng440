@@ -113,10 +113,18 @@ def visible_len(s: str) -> int:
 def pad(s: str, width: int) -> str:
     return s + " " * max(0, width - visible_len(s))
 
-def labelled_pct(label: str, value: float, baseline: float) -> str:
-    pct = (value - baseline) / baseline * 100
+def labelled_pct(label: str, value: float, baseline: float, as_speedup: bool = False) -> str:
+    if as_speedup:
+        # Speedup relative to baseline: value at 1/4 the baseline is 4x as fast,
+        # shown as +300%. Unbounded upward, so big wins don't crush toward -100%
+        # the way a plain % change does. Positive = faster = good (green).
+        pct = (baseline / value - 1) * 100
+        improved = pct > 0
+    else:
+        pct = (value - baseline) / baseline * 100
+        improved = pct < 0
     # Truecolor codes so the red/green overrides the shell theme.
-    colour = "\033[38;2;255;0;0m" if pct > 0 else "\033[38;2;0;200;0m"
+    colour = "\033[38;2;0;200;0m" if improved else "\033[38;2;255;0;0m"
     return f"{label}: {colour}{pct:+{PCT_NUM_W}.1f}%\033[0m"
 
 # A delta group is "(<opt slot>, <tag slot>)". Each slot has a fixed width so
@@ -219,11 +227,11 @@ def benchmark_tag(tag: TagInfo):
         def report(operation: str, results):
             cpu = sum(results) / NUM_AVGING_RUNS
 
-            cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation]) if opt_level > 0 else None
+            cpu_opt = labelled_pct(f"O{opt_level - 1}", cpu, prev_opt_cpu[operation], as_speedup=True) if opt_level > 0 else None
             key = (opt_level, operation)
             base_key = (0, operation)
-            cpu_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", cpu, prev_cpu[key]) if key in prev_cpu else None
-            cpu_v1 = labelled_pct(f"'{base_tag_name}' O0", cpu, base_cpu[base_key]) if show_v1 and base_key in base_cpu else None
+            cpu_tag = labelled_pct(f"'{prev_tag_name}' O{opt_level}", cpu, prev_cpu[key], as_speedup=True) if key in prev_cpu else None
+            cpu_v1 = labelled_pct(f"'{base_tag_name}' O0", cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
