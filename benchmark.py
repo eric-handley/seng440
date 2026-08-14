@@ -153,6 +153,14 @@ def md_pct(value: float, baseline: float, as_speedup: bool = False) -> str:
 def md_cell(entry) -> str:
     return entry or ""
 
+# Format a byte-per-second throughput, picking the largest unit that keeps the
+# number at or above 1 so it reads naturally (e.g. 1.2 GB/s rather than 1200 MB/s).
+def fmt_rate(bytes_per_sec: float) -> str:
+    for unit, scale in (("GB/s", 1e9), ("MB/s", 1e6), ("KB/s", 1e3)):
+        if bytes_per_sec >= scale:
+            return f"{bytes_per_sec / scale:,.1f} {unit}"
+    return f"{bytes_per_sec:,.1f} B/s"
+
 # Each metric's value from the previous tag, used to report its delta against
 # the tag benchmarked just before. cpu (cycles) and time (CPU seconds) are keyed
 # by (opt_level, operation); asm line count is keyed by opt_level. prev_tag_name
@@ -187,8 +195,9 @@ def build_md_header() -> str:
         f"|  | cycles   | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
         f"|  | cpu time | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
         f"|  | wall     | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
-        f"|  | asm      | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} |\n"
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        f"|  | asm      | Δ prev | {f"Δ '{prev}'" if prev else ""} | {f"Δ '{base}' O2" if base else ""} "
+        "|  | rate |\n"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     )
 
 # The output file handle, opened once at startup below.
@@ -276,6 +285,12 @@ def benchmark_tag(tag: TagInfo):
             prev_wall[key] = wall
             prev_opt_wall[operation] = wall
 
+            # Data rate of the operation: the wav's byte size divided by the
+            # wall time (the elapsed real time of just the (de)compress call),
+            # unit-scaled. Higher is better; unlike the deltas this is an absolute
+            # throughput figure so it needs no baseline.
+            rate = fmt_rate(wav_size / wall)
+
             # Only the compress row labels the build; the decompress row beneath
             # it shares the same one, so its build cell is left blank.
             build_cell = f"O{opt_level}" if operation == "compress" else ""
@@ -284,7 +299,8 @@ def benchmark_tag(tag: TagInfo):
                 f"|  | {cpu:,.0f} | {md_cpu_opt} | {md_cpu_tag} | {md_cpu_v1} "
                 f"|  | {cpu_time:.4f}s | {md_time_opt} | {md_time_tag} | {md_time_v1} "
                 f"|  | {wall:.4f}s | {md_wall_opt} | {md_wall_tag} | {md_wall_v1} "
-                f"|  | {asm_lines} | {md_asm_opt} | {md_asm_tag} | {md_asm_v1} |"
+                f"|  | {asm_lines} | {md_asm_opt} | {md_asm_tag} | {md_asm_v1} "
+                f"|  | {rate} |"
             )
 
         report("compress", compress_results)
@@ -314,6 +330,10 @@ os.makedirs("build", exist_ok=True)
 wav_path = os.path.join("build", os.path.basename(cli_args.wav))
 shutil.copyfile(cli_args.wav, wav_path)
 cli_args.wav = wav_path
+
+# Byte size of the wav being processed, used to turn wall time into a throughput
+# (data rate) figure per operation.
+wav_size = os.path.getsize(wav_path)
 
 # Open the output file up front so each tag's table can be appended (and flushed)
 # as it completes and watched building up live.
