@@ -181,10 +181,6 @@ void* compress_wav_thread(void* arg) {
         vst1_u8(&out_samples[i], compressed);
     }
 
-    for (; i < num_samples; ++i) {                          // Remaining (< 8) samples
-        out_samples[i] = compress_sample(in_samples[i]);
-    }
-
     return NULL;
 }
 
@@ -202,10 +198,6 @@ void* decompress_wav_thread(void* arg) {
         vst1q_s16(&out_samples[i], decompressed);
     }
 
-    for (; i < num_samples; ++i) {                          // Remaining (< 8) samples
-        out_samples[i] = decompress_sample(in_samples[i]);
-    }
-
     return NULL;
 }
 
@@ -221,19 +213,25 @@ wav_t* compress_wav(wav_t* in) {
     int16_t *in_samples  = (int16_t *)in->data.samples;
     uint8_t *out_samples = out->data.samples;
     uint32_t num_samples = in->data.cksize / sizeof(int16_t);
-    
-    uint32_t samples_per_thread = num_samples / NUM_THREADS;
+
+    // Give each thread a whole number of 8-sample NEON batches (128 bits of int16)
+    uint32_t num_batches   = num_samples / 8;
+    uint32_t base_batches  = num_batches / NUM_THREADS;
+    uint32_t extra_batches = num_batches % NUM_THREADS;
+    uint32_t offset = 0;
 
     pthread_t threads[NUM_THREADS];
-    thread_args_t thread_args[NUM_THREADS]; 
+    thread_args_t thread_args[NUM_THREADS];
     cpu_set_t cpu;
     pthread_attr_t attr;
-    
+
     // Dispatch worker threads and bind them to a specific physical core
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
-        thread_args[i].u8_buffer_p  = out_samples + (i * samples_per_thread);
-        thread_args[i].u16_buffer_p = in_samples  + (i * samples_per_thread);
-        thread_args[i].num_samples  = samples_per_thread;
+        uint32_t count = (base_batches + (i < extra_batches ? 1 : 0)) * 8;
+        thread_args[i].u8_buffer_p  = out_samples + offset;
+        thread_args[i].u16_buffer_p = in_samples  + offset;
+        thread_args[i].num_samples  = count;
+        offset += count;
 
         // Bind thread i to core i
         pthread_attr_init(&attr);
@@ -249,9 +247,7 @@ wav_t* compress_wav(wav_t* in) {
         pthread_join(threads[i], NULL);
     }
 
-    uint32_t remaining_samples  = num_samples % NUM_THREADS; // Number of remaining samples not easily divisible among threads (should be <= 3)
-
-    for (uint32_t i = num_samples - remaining_samples; i < num_samples; ++i) { // Start at index of first unhandled sample
+    for (uint32_t i = offset; i < num_samples; ++i) { // Final < 8 samples that don't fill a batch
         out_samples[i] = compress_sample(in_samples[i]);
     }
 
@@ -265,24 +261,30 @@ wav_t* decompress_wav(wav_t* in) {
     wav_t* out = new_wav(in->fmt.nChannels, in->fmt.nSamplesPerSec, 16, num_frames, WAVE_FORMAT_PCM);
     if (out == NULL) {
         exit(1);
-    }
+    } 
 
-    uint8_t  *in_samples  = in->data.samples;
-    int16_t  *out_samples = (int16_t *)out->data.samples;
+    uint8_t *in_samples  = in->data.samples;
+    int16_t *out_samples = (int16_t *)out->data.samples;
     uint32_t num_samples = in->data.cksize;
 
-    uint32_t samples_per_thread = num_samples / NUM_THREADS;
-    
+    // Give each thread a whole number of 8-sample NEON batches (64 bits of u8)
+    uint32_t num_batches   = num_samples / 8;
+    uint32_t base_batches  = num_batches / NUM_THREADS;
+    uint32_t extra_batches = num_batches % NUM_THREADS;
+    uint32_t offset = 0;
+
     pthread_t threads[NUM_THREADS];
-    thread_args_t thread_args[NUM_THREADS]; 
+    thread_args_t thread_args[NUM_THREADS];
     cpu_set_t cpu;
     pthread_attr_t attr;
-    
+
     // Dispatch worker threads and bind them to a specific physical core
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
-        thread_args[i].u8_buffer_p  = in_samples  + (i * samples_per_thread);
-        thread_args[i].u16_buffer_p = out_samples + (i * samples_per_thread);
-        thread_args[i].num_samples  = samples_per_thread;
+        uint32_t count = (base_batches + (i < extra_batches ? 1 : 0)) * 8;
+        thread_args[i].u8_buffer_p  = in_samples  + offset;
+        thread_args[i].u16_buffer_p = out_samples + offset;
+        thread_args[i].num_samples  = count;
+        offset += count;
 
         // Bind thread i to core i
         pthread_attr_init(&attr);
@@ -298,9 +300,7 @@ wav_t* decompress_wav(wav_t* in) {
         pthread_join(threads[i], NULL);
     }
 
-    uint32_t remaining_samples  = num_samples % NUM_THREADS; // Number of remaining samples not easily divisible among threads (should be <= 3)
-
-    for (uint32_t i = num_samples - remaining_samples; i < num_samples; ++i) { // Start at index of first unhandled sample
+    for (uint32_t i = offset; i < num_samples; ++i) { // Final < 8 samples that don't fill a batch
         out_samples[i] = decompress_sample(in_samples[i]);
     }
 
