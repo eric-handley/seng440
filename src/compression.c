@@ -2,7 +2,7 @@
 
 #define MAGNITUDE_BIAS 132
 
-uint8x8_t vector_compress_samples(int16x8_t s) {
+uint8x8_t __attribute__((always_inline)) vector_compress_samples(int16x8_t s) {
     // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
     // Theoretically 128/8 = 16 samples could be returned from this function
     // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
@@ -55,7 +55,7 @@ uint8x8_t vector_compress_samples(int16x8_t s) {
     return vmvn_u8(code_words); // Bitwise NOT code words to match mu-law spec
 }
 
-int16x8_t vector_decompress_samples(uint8x8_t s) {
+int16x8_t __attribute__((always_inline)) vector_decompress_samples(uint8x8_t s) {
     // Neon q registers are 128 bits so 128/8 = 16 compressed samples can be 
     // processed at a time (uint16x8_t). However, we can only return 
     // 128/16 = 8 decompressed samples in a single register, so limit input to 8 samples
@@ -106,7 +106,7 @@ int16x8_t vector_decompress_samples(uint8x8_t s) {
     return out;
 }
 
-uint8_t compress_sample(int16_t s) {
+uint8_t __attribute__((always_inline)) compress_sample(int16_t s) {
     int16_t const mask = s >> 15;                            // Getting the sign bit. It must be signed to allow sign extension when shifting so that the mask is all 1's instead of 000...01
     uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
@@ -127,7 +127,7 @@ uint8_t compress_sample(int16_t s) {
     return ~code_word;                                       // Invert sample to match mu-law spec
 }
 
-int16_t decompress_sample(uint8_t s) {
+int16_t __attribute__((always_inline)) decompress_sample(uint8_t s) {
     s = ~s;                                                          // Uninvert sample to match mu-law spec
     
     uint8_t chord_index = (s >> 4) & 0x07;                           // Shift chord bits into position 0:2 and mask only these bits
