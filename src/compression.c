@@ -87,11 +87,12 @@ static inline int16x8_t __attribute__((always_inline)) vector_decompress_samples
         vsra_n_u8(                                         // This is complicated. vsra = shift-right-accumulate allows us to fuse (>> 4) and (+ 3)
             vdup_n_u8(3),                                  
             vbic_u8(                                       // s is not yet inverted. vbic (AND-NOT) combines inversion with mask to allow us to get the chord index here
-                vdup_n_u8(0x70), s), 
-                4
-            )                       
-        )
-    );
+                vdup_n_u8(0x70), 
+                s
+            ), 
+            4
+        )                       
+    ));
 
     uint16x8_t magnitudes = vshlq_u16(
         vmovl_u8(                             // Widen to u16 so the shift doesn't overflow
