@@ -310,11 +310,19 @@ def benchmark_tag(tag: TagInfo):
 
     prev_tag_name = tag.name
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(
+    description="Benchmark the compressor across git tags (oldest to newest) plus the "
+                "current working tree, emitting a markdown table of cycles, CPU time, "
+                "wall time, asm line count and data rate at optimisation levels O0-O3."
+)
 parser.add_argument("wav", help="Path to the .wav file to compress during benchmarking")
-parser.add_argument("--current", action="store_true", help="Benchmark the current working tree as-is, without stashing or checking out tags")
+parser.add_argument("--current", action="store_true", help="Benchmark only the current working tree as-is, without stashing or checking out any tags")
 parser.add_argument("--exclude-current", action="store_true", help="When benchmarking tags, skip benchmarking the current working tree at the end")
+parser.add_argument("--n-latest", type=int, metavar="N", help="Only compare the N most recent items. By default the current working tree counts as one item, so N=1 is just the current tree, N=2 is the current tree and the latest tag, and so on. With --exclude-current the current tree is dropped and all N items are tags, so e.g. --n-latest 2 --exclude-current benchmarks the two most recent tags")
 cli_args = parser.parse_args()
+
+if cli_args.n_latest is not None and cli_args.n_latest < 1:
+    parser.error("--n-latest must be at least 1")
 
 # Tag deltas are only shown when benchmarking multiple tags, not in --current.
 compare_tags = not cli_args.current
@@ -359,6 +367,15 @@ else:
     try:
         tags = execute("git for-each-ref refs/tags --sort=creatordate --format='%(refname:short) %(objectname:short)'").removesuffix("\n")
         tags = [TagInfo(name, commit) for name, commit in (t.split(' ') for t in tags.split('\n'))]
+
+        # --n-latest keeps only the N most recent items. The current working tree
+        # counts as one of the N, leaving N-1 slots for tags; but with
+        # --exclude-current the current tree isn't benchmarked, so all N slots go
+        # to tags (e.g. --n-latest 2 --exclude-current benchmarks the two most
+        # recent tags).
+        if cli_args.n_latest is not None:
+            n_tags = cli_args.n_latest if cli_args.exclude_current else cli_args.n_latest - 1
+            tags = tags[-n_tags:] if n_tags > 0 else []
 
         for tag in tags:
             execute(f"git checkout {tag.commit}")
