@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "stdio.h": "c",
+        "mts.h": "c",
+        "ctype.h": "c",
+        "time.h": "c",
+        "cstdlib": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
+}
