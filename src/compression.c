@@ -216,8 +216,8 @@ wav_t* compress_wav(wav_t* in) {
     uint8_t *out_samples = out->data.samples;
     uint32_t num_samples = in->data.cksize / sizeof(int16_t);
 
-    // Give each thread a whole number of 8-sample NEON batches (128 bits of int16)
-    uint32_t num_batches   = num_samples / 8;
+    // Give each thread a whole number of 16-sample batches 
+    uint32_t num_batches   = num_samples / 16;
     uint32_t base_batches  = num_batches / NUM_THREADS;
     uint32_t extra_batches = num_batches % NUM_THREADS;
     uint32_t offset = 0;
@@ -229,7 +229,7 @@ wav_t* compress_wav(wav_t* in) {
 
     // Dispatch worker threads and bind them to a specific physical core
     for (uint8_t i = 0; i < NUM_THREADS; ++i) {
-        uint32_t count = (base_batches + (i < extra_batches ? 1 : 0)) * 8;
+        uint32_t count = (base_batches + (i < extra_batches ? 1 : 0)) * 16;
         thread_args[i].u8_buffer_p  = out_samples + offset;
         thread_args[i].u16_buffer_p = in_samples  + offset;
         thread_args[i].num_samples  = count;
