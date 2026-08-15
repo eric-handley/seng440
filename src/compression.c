@@ -34,6 +34,7 @@ static inline uint8x8_t __attribute__((always_inline)) vector_compress_samples(i
     // Cannot shift elements by variable amounts in one instruction. Need
     // per-lane shift count = clz - 10  (negative -> right shift by 10 - clz)
     // Needs to be negative as vshr (vec shift right) can only shift by const
+    // but we can left shift with a variable amount, which can be negative -> right shift
     int16x8_t shift_counts = vsubq_s16(
         vreinterpretq_s16_u16(clz_u16),
         vdupq_n_s16(11)
@@ -97,7 +98,7 @@ static inline int16x8_t __attribute__((always_inline)) vector_decompress_samples
     uint16x8_t magnitudes = vshlq_u16(
         vmovl_u8(                             // Widen to u16 so the shift doesn't overflow
             vorr_u8(                          // Equiv. to uint16_t magnitude = (((s & 0x0F) | 0x10) << (shift_count)); except s is not yet inverted
-                vbic_u8(vdup_n_u8(0x0F), s),  // (~s) & 0x0F via bic (AND-NOT) allows the inversion to be combined with the and here
+                vbic_u8(vdup_n_u8(0x0F), s),  // (~s) & 0x0F via bic (AND-NOT) allows the inversion to be combined with the 'and' here
                 vdup_n_u8(0x10)
             )
         ),
@@ -111,10 +112,11 @@ static inline int16x8_t __attribute__((always_inline)) vector_decompress_samples
     // Vectorized: vmovl_s8 widens s8 to s16 with sign extension (extend bit 7 into new top 8 bits), so if we cast the u8 -> s8
     // before vmovl'ing it to s16, the first shift is not actually needed and second shift can be changed to 7 instead of 15
     // e.g. 0b1xxx xxxx u8 -> 0b1xxx xxxx s8 -> 0b1111 1111 1xxx xxxx s16 -> 0b1111 1111 1111 1111 s16
-    int16x8_t const mask = vshrq_n_s16( vmovl_s8(vreinterpret_s8_u8(vmvn_u8(s))), 7 ); // s has not been inverted yet so do that here. Explaination: because we have eliminated the upfront-blocking ~s operation, 
-                                                                                       // operations that use s before this can be pipelined (because we can replace instructions that were using ~s with instructions that 
-                                                                                       // both invert s and do an operation on it at the same time). If we were to invert s upfront, we could use it here 
-                                                                                       // directly but the function overall will be slower because we wait on ~s to do two things instead of one
+    int16x8_t const mask = vshrq_n_s16( vmovl_s8(vreinterpret_s8_u8(vmvn_u8(s))), 7 ); 
+    // s has not been inverted yet so do that here. Explaination: because we have eliminated the upfront-blocking ~s operation, 
+    // operations that use s before this can be pipelined (because we can replace instructions that were using ~s with instructions that 
+    // both invert s and do an operation on it at the same time). If we were to invert s upfront, we could use it here 
+    // directly but the function overall will be slower because we wait on ~s to do two things instead of one
 
     // To convert to 2's complement: if negative, invert and add 1, if positive do nothing
     // Naive implementation: int16_t out = (magnitude ^ mask) + (sign_bit >> 7); 
@@ -129,7 +131,7 @@ static inline int16x8_t __attribute__((always_inline)) vector_decompress_samples
 
 static inline uint8_t __attribute__((always_inline)) compress_sample(int16_t s) {
     int16_t const mask = s >> 15;                            // Getting the sign bit. It must be signed to allow sign extension when shifting so that the mask is all 1's instead of 000...01
-    uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's compliment). Subtracting 1 then inverting if negative (using mask) gives magnitude
+    uint16_t magnitude = ((s + mask) ^ mask);                // If s negative, mask is all 1s (-1 in 2's complement). Subtracting 1 then inverting if negative (using mask) gives magnitude
     uint16_t sign_bit  = s & 0x8000;
 
     magnitude += MAGNITUDE_BIAS;                             // Bias samples so leading 1s match chord boundaries
