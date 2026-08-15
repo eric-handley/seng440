@@ -249,7 +249,7 @@ wav_t* compress_wav(wav_t* in) {
         pthread_join(threads[i], NULL);
     }
 
-    for (uint32_t i = offset; i < num_samples; ++i) { // Final < 8 samples that don't fill a batch
+    for (uint32_t i = offset; i < num_samples; ++i) { // Final < 16 samples that don't fill a batch
         out_samples[i] = compress_sample(in_samples[i]);
     }
 
