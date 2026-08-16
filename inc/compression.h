@@ -16,7 +16,7 @@ typedef struct thread_args_t {
 } thread_args_t;
 
 #define MAGNITUDE_BIAS 132
-#define NUM_THREADS 4
+#define NUM_THREADS 3
 
 wav_t *compress_wav(wav_t *in);
 wav_t *decompress_wav(wav_t *in);
