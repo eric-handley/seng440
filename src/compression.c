@@ -178,122 +178,8 @@ void* compress_wav_thread(void* arg) {
 
     uint32_t i = 0;
     for (; i + 16 <= num_samples; i += 16) {                  // 8 samples per NEON register
-<<<<<<< Updated upstream
-        uint8x8_t c0 = vector_compress_samples(vld1q_s16(&in_samples[i]));
-        // // ~~~~~~~~~~~~~~~~~~~~~~~~ MANUAL INLINE~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        // // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
-        // // Theoretically 128/8 = 16 samples could be returned from this function
-        // // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
-        // // q instructions: use 128bit registers
-
-        // // Replaces manual magnitude calculation: uint16_t magnitude = ((s + mask) ^ mask);
-        // int16x8_t s_0 = vld1q_s16(&in_samples[i]);
-
-        // uint16x8_t magnitudes_0 = vreinterpretq_u16_s16(vabsq_s16(s_0)); /*Neon 0*/
-
-        // // Get sign bits as 8x8 directly instead of shifting to lower 8 later
-        // // vshrn_n shifts by n and narrows by half in one op (u16 -> u8)
-        // uint8x8_t sign_bits_0 = vand_u8( /*Neon 0*/
-        //     vshrn_n_u16(vreinterpretq_u16_s16(s_0), 8), vdup_n_u8(0x80)
-        // );
-
-        // uint16x8_t const mag_bias_vec = vdupq_n_u16(MAGNITUDE_BIAS); /*Neon 0 and 1*/// Put bias in each element position
-        // magnitudes_0 = vaddq_u16(magnitudes_0, mag_bias_vec);    /*Neon 0*/        // Bias samples so leading 1s match chord boundaries
-
-        // magnitudes_0 = vminq_u16(magnitudes_0, vdupq_n_u16(0x7FFF)); /*Neon 0*/     // Clamp samples to 0x7FFF
-
-        // // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-        // uint16x8_t clz_u16_0 = vclzq_u16(magnitudes_0); /*Neon 0*/
-        // // Non-vectorized version subtracts one here, which is compiler optimized out when we use
-        // // (7 - clz) and (10 - clz) later. Vector expression can't be optimized the same way
-        // // so here we remove the subtraction and instead do (8 - clz) and (11 - clz) later
-        
-        // uint8x8_t clz_u8_0 = vmovn_u16(clz_u16_0); /*Neon 0*/ // Need for calculating chord, leaving clz_u16 separate saves op when calculating shift counts
-
-        // // Now using 64 bit instructions/registers for 8x8
-        // uint8x8_t chord_indecies_0 = vsub_u8(vdup_n_u8(8), clz_u8_0); /*Neon 0*/
-        // uint8x8_t code_word_bases_0 = vshl_n_u8(chord_indecies_0, 4); /*Neon 0*/// Shift chord bits of each element into position = 0b0XXX0000
-
-        // // Cannot shift elements by variable amounts in one instruction. Need
-        // // per-lane shift count = clz - 10  (negative -> right shift by 10 - clz)
-        // // Needs to be negative as vshr (vec shift right) can only shift by const
-        // // but we can left shift with a variable amount, which can be negative -> right shift
-        // int16x8_t shift_counts_0 = vsubq_s16( /*Neon 0*/
-        //     vreinterpretq_s16_u16(clz_u16_0),
-        //     vdupq_n_s16(11)
-        // );
-
-        // // Vectorized version of:
-        // // uint8_t code_word = (code_word_base | (sign_bit >> 8)) |
-        // //                     ((magnitude >> (10 - clz)) & 0x0F);
-        // uint8x8_t code_words_0 = vorr_u8(/*Neon 0*/
-        //     vorr_u8(code_word_bases_0, sign_bits_0),                // Sign bits already in top position of each 8bit element
-        //     vand_u8(
-        //         vmovn_u16(vshlq_u16(magnitudes_0, shift_counts_0)), // magnitude >> (10 - clz), narrowed (take low half)
-        //         vdup_n_u8(0x0F)                                 // Only keep the lower 4 bits of each element (ABCD) to complete codeword
-        //     )
-        // );
-
-        // uint8x8_t c0 = vmvn_u8(code_words_0); // Bitwise NOT code words to match mu-law spec
-
-
-        // ///////////~~~~~~~~~~~~~~~~~~~
-        // // uint8x8_t c1 = vector_compress_samples(vld1q_s16(&in_samples[i + 8]));
-        // // ~~~~~~~~~~~~~~~~~~~~~~~~ MANUAL INLINE ~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        // // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
-        // // Theoretically 128/8 = 16 samples could be returned from this function
-        // // but since we are limited by input, return 8 * 8 = 64 bits (uint8x8_t)
-        // // q instructions: use 128bit registers
-        // int16x8_t s_1 = vld1q_s16(&in_samples[i + 8]);
-
-        // // Replaces manual magnitude calculation: uint16_t magnitude = ((s + mask) ^ mask);
-        // uint16x8_t magnitudes_1 = vreinterpretq_u16_s16(vabsq_s16(s_1)); /*Neon 1*/
-
-        // // Get sign bits as 8x8 directly instead of shifting to lower 8 later
-        // // vshrn_n shifts by n and narrows by half in one op (u16 -> u8)
-        // uint8x8_t sign_bits_1 = vand_u8( /*Neon 1*/
-        //     vshrn_n_u16(vreinterpretq_u16_s16(s_1), 8), vdup_n_u8(0x80)
-        // );
-
-        // magnitudes_1 = vaddq_u16(magnitudes_1, mag_bias_vec);    /*Neon 1*/        // Bias samples so leading 1s match chord boundaries
-
-        // magnitudes_1 = vminq_u16(magnitudes_1, vdupq_n_u16(0x7FFF)); /*Neon 1*/     // Clamp samples to 0x7FFF
-
-        // // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
-        // uint16x8_t clz_u16_1 = vclzq_u16(magnitudes_1); /*Neon 1*/
-        // // Non-vectorized version subtracts one here, which is compiler optimized out when we use
-        // // (7 - clz) and (10 - clz) later. Vector expression can't be optimized the same way
-        // // so here we remove the subtraction and instead do (8 - clz) and (11 - clz) later
-        
-        // uint8x8_t clz_u8_1 = vmovn_u16(clz_u16_1); /*Neon 1*/ // Need for calculating chord, leaving clz_u16 separate saves op when calculating shift counts
-
-        // // Now using 64 bit instructions/registers for 8x8
-        // uint8x8_t chord_indecies_1 = vsub_u8(vdup_n_u8(8), clz_u8_1); /*Neon 1*/
-        // uint8x8_t code_word_bases_1 = vshl_n_u8(chord_indecies_1, 4); /*Neon 1*/ // Shift chord bits of each element into position = 0b0XXX0000
-
-        // // Cannot shift elements by variable amounts in one instruction. Need
-        // // per-lane shift count = clz - 10  (negative -> right shift by 10 - clz)
-        // // Needs to be negative as vshr (vec shift right) can only shift by const
-        // // but we can left shift with a variable amount, which can be negative -> right shift
-        // int16x8_t shift_counts_1 = vsubq_s16( /*Neon 1*/
-        //     vreinterpretq_s16_u16(clz_u16_1),
-        //     vdupq_n_s16(11)
-        // );
-
-        // // Vectorized version of:
-        // // uint8_t code_word = (code_word_base | (sign_bit >> 8)) |
-        // //                     ((magnitude >> (10 - clz)) & 0x0F);
-        // uint8x8_t code_words_1 = vorr_u8(/*Neon 1*/
-        //     vorr_u8(code_word_bases_1, sign_bits_1),                // Sign bits already in top position of each 8bit element
-        //     vand_u8(
-        //         vmovn_u16(vshlq_u16(magnitudes_1, shift_counts_1)), // magnitude >> (10 - clz), narrowed (take low half)
-        //         vdup_n_u8(0x0F)                                 // Only keep the lower 4 bits of each element (ABCD) to complete codeword
-        //     )
-        // );
-
-        // uint8x8_t c1 = vmvn_u8(code_words_1); // Bitwise NOT code words to match mu-law spec
-        uint8x8_t c1 = vector_compress_samples(vld1q_s16(&in_samples[i + 8]));
-=======
+        // uint8x8_t c0 = vector_compress_samples(vld1q_s16(&in_samples[i]));
+        // uint8x8_t c1 = vector_compress_samples(vld1q_s16(&in_samples[i + 8]));
         // uint8x8_t c0 = vector_compress_samples(vld1q_s16(&in_samples[i]));
         // ~~~~~~~~~~~~~~~~~~~~~~~~ MANUAL INLINE~~~~~~~~~~~~~~~~~~~~~~~~~~~
         // Neon q registers are 128 bits so 128/16 = 8 samples can be processed at a time (uint16x8_t)
@@ -380,7 +266,6 @@ void* compress_wav_thread(void* arg) {
         uint8x8_t c0 = vmvn_u8(code_words_0); // Bitwise NOT code words to match mu-law spec
         uint8x8_t c1 = vmvn_u8(code_words_1); // Bitwise NOT code words to match mu-law spec
 
->>>>>>> Stashed changes
         vst1q_u8(&out_samples[i], vcombine_u8(c0, c1));
     }
 
