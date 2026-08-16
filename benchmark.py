@@ -20,6 +20,8 @@ def _handle_sigterm(signum, frame):
 signal.signal(signal.SIGTERM, _handle_sigterm)
 
 NUM_AVGING_RUNS = 3
+LOWEST_OPT_LEVEL = 1
+HIGHEST_OPT_LEVEL = 2
 
 @dataclass
 class TagInfo:
@@ -229,7 +231,7 @@ def benchmark_tag(tag: TagInfo):
     prev_opt_wall = {}
     prev_opt_asm = 0
 
-    for opt_level in range(0, 4):
+    for opt_level in range(LOWEST_OPT_LEVEL, HIGHEST_OPT_LEVEL + 1):
         compress_results = []
         decompress_results = []
         args = f"-O{opt_level} -static -Iinc"
@@ -245,7 +247,7 @@ def benchmark_tag(tag: TagInfo):
         # build; O0 is never shipped and inflates the deltas), so it's shown for
         # every non-baseline tag.
         show_v1 = not is_base
-        md_asm_opt = md_cell(md_pct(asm_lines, prev_opt_asm) if opt_level > 0 else None)
+        md_asm_opt = md_cell(md_pct(asm_lines, prev_opt_asm) if opt_level > LOWEST_OPT_LEVEL else None)
         md_asm_tag = md_cell(md_pct(asm_lines, prev_asm[opt_level]) if opt_level in prev_asm else None)
         md_asm_v1 = md_cell(md_pct(asm_lines, base_asm[2]) if show_v1 and 2 in base_asm else None)
         if is_base:
@@ -261,25 +263,25 @@ def benchmark_tag(tag: TagInfo):
             key = (opt_level, operation)
             base_key = (2, operation)
 
-            md_cpu_opt = md_cell(md_pct(cpu, prev_opt_cpu[operation], as_speedup=True) if opt_level > 0 else None)
-            md_cpu_tag = md_cell(md_pct(cpu, prev_cpu[key], as_speedup=True) if key in prev_cpu else None)
-            md_cpu_v1 = md_cell(md_pct(cpu, base_cpu[base_key], as_speedup=True) if show_v1 and base_key in base_cpu else None)
+            md_cpu_opt = md_cell(md_pct(cpu, prev_opt_cpu[operation]) if opt_level > LOWEST_OPT_LEVEL else None)
+            md_cpu_tag = md_cell(md_pct(cpu, prev_cpu[key]) if key in prev_cpu else None)
+            md_cpu_v1 = md_cell(md_pct(cpu, base_cpu[base_key]) if show_v1 and base_key in base_cpu else None)
             if is_base:
                 base_cpu[key] = cpu
             prev_cpu[key] = cpu
             prev_opt_cpu[operation] = cpu
 
-            md_time_opt = md_cell(md_pct(cpu_time, prev_opt_time[operation]) if opt_level > 0 else None)
-            md_time_tag = md_cell(md_pct(cpu_time, prev_time[key]) if key in prev_time else None)
-            md_time_v1 = md_cell(md_pct(cpu_time, base_time[base_key]) if show_v1 and base_key in base_time else None)
+            md_time_opt = md_cell(md_pct(cpu_time, prev_opt_time[operation], as_speedup=True) if opt_level > LOWEST_OPT_LEVEL else None)
+            md_time_tag = md_cell(md_pct(cpu_time, prev_time[key], as_speedup=True) if key in prev_time else None)
+            md_time_v1 = md_cell(md_pct(cpu_time, base_time[base_key], as_speedup=True) if show_v1 and base_key in base_time else None)
             if is_base:
                 base_time[key] = cpu_time
             prev_time[key] = cpu_time
             prev_opt_time[operation] = cpu_time
 
-            md_wall_opt = md_cell(md_pct(wall, prev_opt_wall[operation]) if opt_level > 0 else None)
-            md_wall_tag = md_cell(md_pct(wall, prev_wall[key]) if key in prev_wall else None)
-            md_wall_v1 = md_cell(md_pct(wall, base_wall[base_key]) if show_v1 and base_key in base_wall else None)
+            md_wall_opt = md_cell(md_pct(wall, prev_opt_wall[operation], as_speedup=True) if opt_level > LOWEST_OPT_LEVEL else None)
+            md_wall_tag = md_cell(md_pct(wall, prev_wall[key], as_speedup=True) if key in prev_wall else None)
+            md_wall_v1 = md_cell(md_pct(wall, base_wall[base_key], as_speedup=True) if show_v1 and base_key in base_wall else None)
             if is_base:
                 base_wall[key] = wall
             prev_wall[key] = wall
