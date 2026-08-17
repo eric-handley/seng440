@@ -196,6 +196,13 @@ void* compress_wav_thread(void* arg) {
         uint16x8_t magnitudes_0 = vreinterpretq_u16_s16(vabsq_s16(s_0)); /*Neon 0*/
         uint16x8_t magnitudes_1 = vreinterpretq_u16_s16(vabsq_s16(s_1)); /*Neon 1*/
 
+        
+        magnitudes_0 = vaddq_u16(magnitudes_0, mag_bias_vec);    /*Neon 0*/        // Bias samples so leading 1s match chord boundaries
+        magnitudes_1 = vaddq_u16(magnitudes_1, mag_bias_vec);    /*Neon 1*/        // Bias samples so leading 1s match chord boundaries
+        
+        magnitudes_0 = vminq_u16(magnitudes_0, vdupq_n_u16(0x7FFF)); /*Neon 0*/     // Clamp samples to 0x7FFF
+        magnitudes_1 = vminq_u16(magnitudes_1, vdupq_n_u16(0x7FFF)); /*Neon 1*/     // Clamp samples to 0x7FFF
+
         // Get sign bits as 8x8 directly instead of shifting to lower 8 later
         // vshrn_n shifts by n and narrows by half in one op (u16 -> u8)
         uint8x8_t sign_bits_0 = vand_u8( /*Neon 0*/
@@ -204,13 +211,6 @@ void* compress_wav_thread(void* arg) {
         uint8x8_t sign_bits_1 = vand_u8( /*Neon 1*/
             vshrn_n_u16(vreinterpretq_u16_s16(s_1), 8), vdup_n_u8(0x80)
         );
-        magnitudes_0 = vaddq_u16(magnitudes_0, mag_bias_vec);    /*Neon 0*/        // Bias samples so leading 1s match chord boundaries
-        magnitudes_1 = vaddq_u16(magnitudes_1, mag_bias_vec);    /*Neon 1*/        // Bias samples so leading 1s match chord boundaries
-        
-        magnitudes_0 = vminq_u16(magnitudes_0, vdupq_n_u16(0x7FFF)); /*Neon 0*/     // Clamp samples to 0x7FFF
-        magnitudes_1 = vminq_u16(magnitudes_1, vdupq_n_u16(0x7FFF)); /*Neon 1*/     // Clamp samples to 0x7FFF
-
-        
 
         // Equiv. to uint8_t clz = __clz16_inline(magnitude) - 1;
         uint16x8_t clz_u16_0 = vclzq_u16(magnitudes_0); /*Neon 0*/
